@@ -64,8 +64,7 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mIgnoreScrollFrame(nsnull),
       mBuildCaret(aBuildCaret),
       mEventDelivery(aIsForEvents),
-      mIsAtRootOfPseudoStackingContext(PR_FALSE),
-      mPaintAllFrames(PR_FALSE) {
+      mIsAtRootOfPseudoStackingContext(PR_FALSE) {
   PL_InitArenaPool(&mPool, "displayListArena", 1024, sizeof(void*)-1);
 
   nsPresContext* pc = aReferenceFrame->GetPresContext();
@@ -543,13 +542,11 @@ nsDisplayBackground::IsVaryingRelativeToFrame(nsDisplayListBuilder* aBuilder,
   if (!bg->HasFixedBackground())
     return PR_FALSE;
 
-  // aAncestorFrame is the frame that is going to be moved.
-  // Check if mFrame is equal to aAncestorFrame or aAncestorFrame is an
-  // ancestor of mFrame in the same document. If this is true, mFrame
-  // will move relative to its viewport, which means this display item will
-  // change when it is moved.  If they are in different documents, we do not
-  // want to return true because mFrame won't move relative to its viewport.
-  for (nsIFrame* f = mFrame; f; f = f->GetParent()) {
+  // aAncestorFrame is an ancestor of this frame ... if it's in our document
+  // then we'll be moving relative to the viewport, so we will change our
+  // display. If it's in some ancestor document then we won't be moving
+  // relative to the viewport so we won't change our display.
+  for (nsIFrame* f = mFrame->GetParent(); f; f = f->GetParent()) {
     if (f == aAncestorFrame)
       return PR_TRUE;
   }
@@ -811,17 +808,17 @@ void nsDisplayOpacity::Paint(nsDisplayListBuilder* aBuilder,
 
   nsCOMPtr<nsIDeviceContext> devCtx;
   aCtx->GetDeviceContext(*getter_AddRefs(devCtx));
-  float a2p = 1.0f / devCtx->AppUnitsPerDevPixel();
+  float t2p = devCtx->AppUnitsToDevUnits();
 
   nsRefPtr<gfxContext> ctx = (gfxContext*)aCtx->GetNativeGraphicData(nsIRenderingContext::NATIVE_THEBES_CONTEXT);
 
   ctx->Save();
 
   ctx->NewPath();
-  ctx->Rectangle(gfxRect(bounds.x * a2p,
-                         bounds.y * a2p,
-                         bounds.width * a2p,
-                         bounds.height * a2p),
+  ctx->Rectangle(gfxRect(bounds.x * t2p,
+                         bounds.y * t2p,
+                         bounds.width * t2p,
+                         bounds.height * t2p),
                  PR_TRUE);
   ctx->Clip();
 

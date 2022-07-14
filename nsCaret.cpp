@@ -59,6 +59,7 @@
 #include "nsIRenderingContext.h"
 #include "nsIDeviceContext.h"
 #include "nsIView.h"
+#include "nsIScrollableView.h"
 #include "nsIViewManager.h"
 #include "nsPresContext.h"
 #include "nsILookAndFeel.h"

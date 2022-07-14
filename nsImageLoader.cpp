@@ -55,6 +55,8 @@
 
 #include "imgIContainer.h"
 
+#include "nsIViewManager.h"
+
 #include "nsStyleContext.h"
 #include "nsGkAtoms.h"
 

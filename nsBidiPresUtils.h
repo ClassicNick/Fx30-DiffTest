@@ -122,7 +122,7 @@ public:
    * @param aFirstChild          The first child frame of aBlockFrame
    * @param aIsVisualFormControl [IN]  Set if we are in a form control on a
    *                                   visual page.
-   *                                   @see nsBlockFrame::IsVisualFormControl
+   *                                   @see nsHTMLReflowState::IsBidiFormControl
    *
    *  @lina 06/18/2000
    */

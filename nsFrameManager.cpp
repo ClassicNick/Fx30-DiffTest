@@ -71,6 +71,7 @@
 #include "nsIContent.h"
 #include "nsINameSpaceManager.h"
 #include "nsIDocument.h"
+#include "nsIBindingManager.h"
 #include "nsIScrollableFrame.h"
 
 #include "nsIHTMLDocument.h"
@@ -703,9 +704,7 @@ nsFrameManager::RemoveFrame(nsIFrame*       aParentFrame,
   // a gap where the old frame was, we invalidate it here.  (This is
   // reasonably likely to happen when removing a last child in a way
   // that doesn't change the size of the parent.)
-  // This has to sure to invalidate the entire overflow rect; this
-  // is important in the presence of absolute positioning
-  aOldFrame->Invalidate(aOldFrame->GetOverflowRect());
+  aOldFrame->Invalidate(nsRect(nsPoint(0, 0), aOldFrame->GetSize()));
 
   return aParentFrame->RemoveFrame(aListName, aOldFrame);
 }

@@ -198,31 +198,13 @@ protected:
   }
 };
 
-static InlineBackgroundData* gInlineBGData = nsnull;
+static InlineBackgroundData gInlineBGData;
 
 static void GetPath(nsFloatPoint aPoints[],nsPoint aPolyPath[],PRInt32 *aCurIndex,ePathTypes  aPathType,PRInt32 &aC1Index,float aFrac=0);
 
 // FillRect or InvertRect depending on the renderingaInvert parameter
 static void FillOrInvertRect(nsIRenderingContext& aRC,nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight, PRBool aInvert);
 static void FillOrInvertRect(nsIRenderingContext& aRC,const nsRect& aRect, PRBool aInvert);
-
-// Initialize any static variables used by nsCSSRendering.
-nsresult nsCSSRendering::Init()
-{  
-  NS_ASSERTION(!gInlineBGData, "Init called twice");
-  gInlineBGData = new InlineBackgroundData();
-  if (!gInlineBGData)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  return NS_OK;
-}
-
-// Clean up any global variables used by nsCSSRendering.
-void nsCSSRendering::Shutdown()
-{
-  delete gInlineBGData;
-  gInlineBGData = nsnull;
-}
 
 // Draw a line, skipping that portion which crosses aGap. aGap defines a rectangle gap
 // This services fieldset legends and only works for coords defining horizontal lines.
@@ -944,16 +926,14 @@ PRBool  skippedSide = PR_FALSE;
       // (because invert is not supported on cur platform)
       nscolor sideColor(aColorStyle->mColor);
 
-      PRBool  isInvert = PR_FALSE;
+      PRBool  isInvert=PR_FALSE;
       if (aDoOutline) {
-        if (!aOutlineStyle->GetOutlineInitialColor()) {
+        // see if the outline color is 'invert'
+        if (aOutlineStyle->GetOutlineInvert()) { 
+          isInvert = PR_TRUE;
+        } else {
           aOutlineStyle->GetOutlineColor(sideColor);
         }
-#ifdef GFX_HAS_INVERT
-        else {
-          isInvert = PR_TRUE;
-        }
-#endif
       } else {
         PRBool transparent; 
         PRBool foreground;
@@ -1739,7 +1719,6 @@ void nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
 
 #ifdef MOZ_CAIRO_GFX
   gfxContext *ctx = (gfxContext*) aRenderingContext.GetNativeGraphicData(nsIRenderingContext::NATIVE_THEBES_CONTEXT);
-  gfxContext::AntialiasMode oldMode = ctx->CurrentAntialiasMode();
   ctx->SetAntialiasMode(gfxContext::MODE_ALIASED);
 #endif
 
@@ -1773,7 +1752,7 @@ void nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
   }
 
 #ifdef MOZ_CAIRO_GFX
-  ctx->SetAntialiasMode(oldMode);
+  ctx->SetAntialiasMode(gfxContext::MODE_COVERAGE);
 #endif
 }
 
@@ -2101,14 +2080,12 @@ nscoord width, offset;
   PRBool  canDraw = PR_FALSE;
   PRBool  modeChanged=PR_FALSE;
 
-  // see if the outline color is special color.
-  if (aOutlineStyle.GetOutlineInitialColor()) {
+  // see if the outline color is 'invert' or can invert.
+  if (aOutlineStyle.GetOutlineInvert()) {
     canDraw = PR_TRUE;
-#ifdef GFX_HAS_INVERT
     if( NS_SUCCEEDED(aRenderingContext.SetPenMode(nsPenMode_kInvert)) ) {
       modeChanged=PR_TRUE;
     }
-#endif
   } else {
     canDraw = aOutlineStyle.GetOutlineColor(outlineColor);
   }
@@ -2137,11 +2114,10 @@ nscoord width, offset;
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
              twipsPerPixel, aGap);
-    #ifdef GFX_HAS_INVERT
+
     if(modeChanged ) {
       aRenderingContext.SetPenMode(nsPenMode_kNone);
-    }
-#endif
+    }  
   }
 }
 
@@ -2647,7 +2623,7 @@ nsCSSRendering::FindBackground(nsPresContext* aPresContext,
 void
 nsCSSRendering::DidPaint()
 {
-  gInlineBGData->Reset();
+  gInlineBGData.Reset();
 }
 
 void
@@ -2715,6 +2691,16 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
   }
 
   vm->SetDefaultBackgroundColor(canvasColor.mBackgroundColor);
+
+  // Since nsHTMLContainerFrame::CreateViewForFrame might have created
+  // the view before we knew about the child with the fixed background
+  // attachment (root or BODY) or the stylesheet specifying that
+  // attachment, set the BitBlt flag here as well.
+  if (canvasColor.mBackgroundAttachment == NS_STYLE_BG_ATTACHMENT_FIXED) {
+    nsIView *view = aForFrame->GetView();
+    if (view)
+      vm->SetViewBitBltEnabled(view, PR_FALSE);
+  }
 
   PaintBackgroundWithSC(aPresContext, aRenderingContext, aForFrame,
                         aDirtyRect, aBorderArea, canvasColor,
@@ -2879,14 +2865,14 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
       bgOriginArea = aBorderArea;
       break;
     case NS_STYLE_BG_INLINE_POLICY_BOUNDING_BOX:
-      bgOriginArea = gInlineBGData->GetBoundingRect(aForFrame) +
+      bgOriginArea = gInlineBGData.GetBoundingRect(aForFrame) +
                      aBorderArea.TopLeft();
       break;
     default:
       NS_ERROR("Unknown background-inline-policy value!  "
                "Please, teach me what to do.");
     case NS_STYLE_BG_INLINE_POLICY_CONTINUOUS:
-      bgOriginArea = gInlineBGData->GetContinuousRect(aForFrame) +
+      bgOriginArea = gInlineBGData.GetContinuousRect(aForFrame) +
                      aBorderArea.TopLeft();
       break;
     }
@@ -3184,7 +3170,6 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
 
   // Take the intersection again to paint only the required area.
   nsRect absTileRect = tileRect + aBorderArea.TopLeft();
-  
   nsRect drawRect;
   if (drawRect.IntersectRect(absTileRect, dirtyRect)) {
     // Note that due to the way FindTileStart works we're guaranteed
@@ -3200,7 +3185,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
     if (sourceRect.XMost() <= tileWidth && sourceRect.YMost() <= tileHeight) {
       // The entire drawRect is contained inside a single tile; just
       // draw the corresponding part of the image once.
-      aRenderingContext.DrawImage(image, absTileRect, drawRect);
+      aRenderingContext.DrawImage(image, sourceRect, drawRect);
     } else {
       aRenderingContext.DrawTile(image, absTileRect.x, absTileRect.y, &drawRect);
     }
@@ -4038,26 +4023,26 @@ QBCurve::MidPointDivide(QBCurve *A,QBCurve *B)
 
 void FillOrInvertRect(nsIRenderingContext& aRC, nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight, PRBool aInvert)
 {
-#ifdef GFX_HAS_INVERT
+#ifndef MOZ_CAIRO_GFX
   if (aInvert) {
     aRC.InvertRect(aX, aY, aWidth, aHeight);
   } else {
 #endif
     aRC.FillRect(aX, aY, aWidth, aHeight);
-#ifdef GFX_HAS_INVERT
+#ifndef MOZ_CAIRO_GFX
   }
 #endif
 }
 
 void FillOrInvertRect(nsIRenderingContext& aRC, const nsRect& aRect, PRBool aInvert)
 {
-#ifdef GFX_HAS_INVERT
+#ifndef MOZ_CAIRO_GFX
   if (aInvert) {
     aRC.InvertRect(aRect);
   } else {
 #endif
     aRC.FillRect(aRect);
-#ifdef GFX_HAS_INVERT
+#ifndef MOZ_CAIRO_GFX
   }
 #endif
 }
@@ -4220,12 +4205,6 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
     aStartBevelOffset = 0;
     aEndBevelOffset = 0;
   }
-
-#ifdef MOZ_CAIRO_GFX
-  gfxContext *ctx = (gfxContext*) aContext.GetNativeGraphicData(nsIRenderingContext::NATIVE_THEBES_CONTEXT);
-  gfxContext::AntialiasMode oldMode = ctx->CurrentAntialiasMode();
-  ctx->SetAntialiasMode(gfxContext::MODE_ALIASED);
-#endif
 
   switch (aBorderStyle) {
   case NS_STYLE_BORDER_STYLE_NONE:
@@ -4420,10 +4399,6 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
     NS_ASSERTION(PR_FALSE, "Unexpected 'auto' table border");
     break;
   }
-
-#ifdef MOZ_CAIRO_GFX
-  ctx->SetAntialiasMode(oldMode);
-#endif
 }
 
 // End table border-collapsing section

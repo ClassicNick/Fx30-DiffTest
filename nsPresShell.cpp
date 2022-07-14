@@ -4499,6 +4499,7 @@ PresShell::PostReflowCallback(nsIReflowCallback* aCallback)
   nsCallbackEventRequest* request = (nsCallbackEventRequest*)result;
 
   request->callback = aCallback;
+  NS_ADDREF(aCallback);
   request->next = nsnull;
 
   if (mLastCallbackEventRequest) {
@@ -4537,6 +4538,7 @@ PresShell::CancelReflowCallback(nsIReflowCallback* aCallback)
         }
 
         FreeFrame(sizeof(nsCallbackEventRequest), toFree);
+        NS_RELEASE(callback);
       } else {
         before = node;
         node = node->next;
@@ -4601,8 +4603,8 @@ PresShell::HandlePostedReflowCallbacks()
      nsIReflowCallback* callback = node->callback;
      FreeFrame(sizeof(nsCallbackEventRequest), node);
      if (callback)
-       callback->ReflowFinished();
-     shouldFlush = PR_TRUE;
+       callback->ReflowFinished(this, &shouldFlush);
+     NS_IF_RELEASE(callback);
    }
 
    if (shouldFlush)

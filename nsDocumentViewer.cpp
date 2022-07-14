@@ -86,6 +86,7 @@
 #include "nsIPageSequenceFrame.h"
 #include "nsIURL.h"
 #include "nsNetUtil.h"
+#include "nsIChromeEventHandler.h"
 #include "nsIContentViewerEdit.h"
 #include "nsIContentViewerFile.h"
 #include "nsICSSLoader.h"
@@ -309,7 +310,7 @@ class DocumentViewerImpl : public nsIDocumentViewer,
   friend class nsPrintEngine;
 
 public:
-  DocumentViewerImpl();
+  DocumentViewerImpl(nsPresContext* aPresContext);
 
   NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
 
@@ -324,6 +325,8 @@ public:
   NS_IMETHOD GetDocument(nsIDocument** aResult);
   NS_IMETHOD GetPresShell(nsIPresShell** aResult);
   NS_IMETHOD GetPresContext(nsPresContext** aResult);
+  NS_IMETHOD CreateDocumentViewerUsing(nsPresContext* aPresContext,
+                                       nsIDocumentViewer** aResult);
 
   // nsIContentViewerEdit
   NS_DECL_NSICONTENTVIEWEREDIT
@@ -466,7 +469,7 @@ static NS_DEFINE_CID(kWidgetCID,            NS_CHILD_CID);
 nsresult
 NS_NewDocumentViewer(nsIDocumentViewer** aResult)
 {
-  *aResult = new DocumentViewerImpl();
+  *aResult = new DocumentViewerImpl(nsnull);
   if (!*aResult) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -506,8 +509,9 @@ void DocumentViewerImpl::PrepareToStartLoad()
 }
 
 // Note: operator new zeros our memory, so no need to init things to null.
-DocumentViewerImpl::DocumentViewerImpl()
-  : mTextZoom(1.0),
+DocumentViewerImpl::DocumentViewerImpl(nsPresContext* aPresContext)
+  : mPresContext(aPresContext),
+    mTextZoom(1.0),
     mIsSticky(PR_TRUE),
     mHintCharsetSource(kCharsetUninitialized)
 {
@@ -794,6 +798,14 @@ DocumentViewerImpl::InitInternal(nsIWidget* aParentWidget,
 
   mDeviceContext = aDeviceContext;
 
+#if defined(NS_PRINTING) && defined(NS_PRINT_PREVIEW)
+  // Clear PrintPreview Alternate Device
+  if (mDeviceContext) {
+    mDeviceContext->SetAltDevice(nsnull);
+    mDeviceContext->SetCanonicalPixelScale(1.0);
+  }
+#endif
+
   PRBool makeCX = PR_FALSE;
   if (aDoCreation) {
     if (aParentWidget && !mPresContext) {
@@ -833,35 +845,30 @@ DocumentViewerImpl::InitInternal(nsIWidget* aParentWidget,
 
 #ifdef NS_PRINT_PREVIEW
       if (mIsPageMode) {
-        // I'm leaving this in a broken state for the moment; we should
-        // be measuring/scaling with the print device context, not the
-        // screen device context, but this is good enough to allow
-        // printing reftests to work.
-#if 0
+        nsCOMPtr<nsIDeviceContext> devctx;
         nsCOMPtr<nsIDeviceContextSpec> devspec =
-          do_CreateInstance("@mozilla.org/gfx/devicecontextspec;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
+          do_CreateInstance("@mozilla.org/gfx/devicecontextspec;1");
+        // XXX CRASHES ON OOM. YUM. WOULD SOMEONE PLEASE FIX ME.
+        //     PERHAPS SOMEONE SHOULD HAVE REVIEWED THIS CODE.
+        // XXX I have no idea how critical this code is, so i'm not fixing it.
+        //     In fact I'm just adding a line that makes this block
+        //     get compiled *less* often.
         // mWindow has been initialized by preceding call to MakeWindow
-        rv = devspec->Init(mWindow, mPresContext->GetPrintSettings(), PR_FALSE);
-        NS_ENSURE_SUCCESS(rv, rv);
-        nsCOMPtr<nsIDeviceContext> devctx =
-          do_CreateInstance("@mozilla.org/gfx/devicecontext;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-        rv = devctx->InitForPrinting(devspec);
-        NS_ENSURE_SUCCESS(rv, rv);
-        // XXX I'm breaking this code; I'm not sure I really want to mess with
-        // the document viewer at the moment to get the right device context
-        // (this won't break anyone, since page layout mode was never really
-        // usable)
-#endif
-        PRInt32 pageWidth = 0, pageHeight = 0;
-        mPresContext->GetPrintSettings()->GetPageSizeInTwips(&pageWidth,
-                                                             &pageHeight);
-        mPresContext->SetPageSize(
-          nsSize(mPresContext->TwipsToAppUnits(pageWidth),
-                 mPresContext->TwipsToAppUnits(pageHeight)));
+        devspec->Init(mWindow, mPresContext->GetPrintSettings(), PR_FALSE);
+        // XXX CRASHES ON OOM under at least
+        // nsPrintJobFactoryPS::CreatePrintJob. WOULD SOMEONE PLEASE FIX ME.
+        //     PERHAPS SOMEONE SHOULD HAVE REVIEWED THIS CODE.
+        // XXX I have no idea how critical this code is, so i'm not fixing it.
+        //     In fact I'm just adding a line that makes this block
+        //     get compiled *less* often.
+        mDeviceContext->GetDeviceContextFor(devspec, *getter_AddRefs(devctx));
+        mDeviceContext->SetAltDevice(devctx);
+        mDeviceContext->SetUseAltDC(kUseAltDCFor_SURFACE_DIM, PR_TRUE);
+        //Get paper dims:
+        PRInt32 pageWidth, pageHeight;
+        devctx->GetDeviceSurfaceDimensions(pageWidth, pageHeight);
+        mPresContext->SetPageSize(nsSize(pageWidth, pageHeight));
         mPresContext->SetIsRootPaginatedDocument(PR_TRUE);
-        mPresContext->SetPageScale(1.0f);
       }
 #endif
     }
@@ -918,8 +925,8 @@ DocumentViewerImpl::DumpContentToPPM(const char* aFileName)
   }
   nsRect r = view->GetBounds() - view->GetPosition();
   float p2t = mPresContext->PixelsToTwips();
-  // Limit the bitmap size to 2000x2000
-  nscoord twipLimit = NSIntPixelsToTwips(2000, p2t);
+  // Limit the bitmap size to 5000x5000
+  nscoord twipLimit = NSIntPixelsToTwips(5000, p2t);
   if (r.height > twipLimit)
     r.height = twipLimit;
   if (r.width > twipLimit)
@@ -1980,6 +1987,13 @@ DocumentViewerImpl::Show(void)
 
     mDeviceContext = mParentWidget->GetDeviceContext();
 
+#if defined(NS_PRINTING) && defined(NS_PRINT_PREVIEW)
+    // Clear PrintPreview Alternate Device
+    if (mDeviceContext) {
+      mDeviceContext->SetAltDevice(nsnull);
+    }
+#endif
+
     // Create presentation context
     NS_ASSERTION(!mPresContext, "Shouldn't have a prescontext if we have no shell!");
     mPresContext = new nsPresContext(mDocument, nsPresContext::eContext_Galley);
@@ -2214,7 +2228,7 @@ DocumentViewerImpl::CreateStyleSet(nsIDocument* aDocument,
   // Append chrome sheets (scrollbars + forms).
   PRBool shouldOverride = PR_FALSE;
   nsCOMPtr<nsIDocShell> ds(do_QueryInterface(docShell));
-  nsCOMPtr<nsIDOMEventTarget> chromeHandler;
+  nsCOMPtr<nsIChromeEventHandler> chromeHandler;
   nsCOMPtr<nsIURI> uri;
   nsCOMPtr<nsICSSStyleSheet> csssheet;
 
@@ -2401,6 +2415,41 @@ nsresult DocumentViewerImpl::GetDocumentSelection(nsISelection **aSelection)
                                 aSelection);
   return NS_ERROR_FAILURE;
 }
+
+NS_IMETHODIMP
+DocumentViewerImpl::CreateDocumentViewerUsing(nsPresContext* aPresContext,
+                                              nsIDocumentViewer** aResult)
+{
+  if (!mDocument) {
+    // XXX better error
+    return NS_ERROR_NULL_POINTER;
+  }
+  if (!aPresContext) {
+    return NS_ERROR_NULL_POINTER;
+  }
+
+  // Create new viewer
+  DocumentViewerImpl* viewer = new DocumentViewerImpl(aPresContext);
+  if (!viewer) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  NS_ADDREF(viewer);
+
+  // XXX make sure the ua style sheet is used (for now; need to be
+  // able to specify an alternate)
+  viewer->SetUAStyleSheet(mUAStyleSheet);
+
+  // Bind the new viewer to the old document
+  nsresult rv = viewer->LoadStart(mDocument);
+
+  *aResult = viewer;
+
+  return rv;
+}
+
+#ifdef XP_MAC
+#pragma mark -
+#endif
 
 /* ========================================================================================
  * nsIContentViewerEdit
@@ -4068,8 +4117,6 @@ DocumentViewerImpl::OnDonePrinting()
 
 NS_IMETHODIMP DocumentViewerImpl::SetPageMode(PRBool aPageMode, nsIPrintSettings* aPrintSettings)
 {
-  // XXX Page mode is only partially working; it's currently used for
-  // reftests that require a paginated context
   mIsPageMode = aPageMode;
   // Get the current size of what is being viewed
   nsRect bounds;
