@@ -1067,6 +1067,14 @@ nsStyleBackground::~nsStyleBackground()
 
 nsChangeHint nsStyleBackground::CalcDifference(const nsStyleBackground& aOther) const
 {
+  if (mBackgroundAttachment != aOther.mBackgroundAttachment
+    && ((NS_STYLE_BG_ATTACHMENT_FIXED == mBackgroundAttachment) ||
+        (NS_STYLE_BG_ATTACHMENT_FIXED == aOther.mBackgroundAttachment)))
+    // this might require creation of a view
+    // XXX This probably doesn't call ApplyRenderingChangeToTree, which
+    // means we might not invalidate the canvas if this is the body.
+    return NS_STYLE_HINT_FRAMECHANGE;
+
   if ((mBackgroundAttachment == aOther.mBackgroundAttachment) &&
       (mBackgroundFlags == aOther.mBackgroundFlags) &&
       (mBackgroundRepeat == aOther.mBackgroundRepeat) &&
@@ -1091,7 +1099,7 @@ nsChangeHint nsStyleBackground::CalcDifference(const nsStyleBackground& aOther) 
 /* static */
 nsChangeHint nsStyleBackground::MaxDifference()
 {
-  return NS_STYLE_HINT_VISUAL;
+  return NS_STYLE_HINT_FRAMECHANGE;
 }
 #endif
 
@@ -1149,7 +1157,10 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       || mDisplay != aOther.mDisplay
       || (mFloats == NS_STYLE_FLOAT_NONE) != (aOther.mFloats == NS_STYLE_FLOAT_NONE)
       || mOverflowX != aOther.mOverflowX
-      || mOverflowY != aOther.mOverflowY)
+      || mOverflowY != aOther.mOverflowY
+      // might need to create a view to handle change from 1.0 to partial opacity
+      || (mOpacity != aOther.mOpacity
+          && ((mOpacity < 1.0) != (aOther.mOpacity < 1.0))))
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
 
   if (mFloats != aOther.mFloats)
@@ -1166,7 +1177,7 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
   if (mClipFlags != aOther.mClipFlags
       || mClip != aOther.mClip
       || mOpacity != aOther.mOpacity)
-    NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
+    NS_UpdateHint(hint, nsChangeHint_SyncFrameView);
 
   return hint;
 }

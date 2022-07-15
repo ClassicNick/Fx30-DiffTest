@@ -204,9 +204,7 @@ struct nsStyleBackground : public nsStyleStruct {
 
 #define BORDER_COLOR_TRANSPARENT  0x40
 #define BORDER_COLOR_FOREGROUND   0x20
-#define OUTLINE_COLOR_INITIAL     0x80
-// TRANSPARENT | FOREGROUND | INITIAL(OUTLINE)
-#define BORDER_COLOR_SPECIAL      0xE0
+#define BORDER_COLOR_SPECIAL      0x60 // TRANSPARENT | FOREGROUND 
 #define BORDER_STYLE_MASK         0x1F
 
 #define NS_SPACING_MARGIN   0
@@ -316,14 +314,7 @@ struct nsBorderColors {
 // Border widths are rounded to the nearest integer number of pixels, but values
 // between zero and one device pixels are always rounded up to one device pixel.
 #define NS_ROUND_BORDER_TO_PIXELS(l,tpp) \
-  ((l) == 0) ? 0 : PR_MAX((tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp))
-// Outline offset is rounded to the nearest integer number of pixels, but values
-// between zero and one device pixels are always rounded up to one device pixel.
-// Note that the offset can be negative.
-#define NS_ROUND_OFFSET_TO_PIXELS(l,tpp) \
-  (((l) == 0) ? 0 : \
-    ((l) > 0) ? PR_MAX( (tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp)) : \
-                PR_MIN(-(tpp), ((l) - ((tpp) / 2)) / (tpp) * (tpp)))
+    ((l) == 0) ? 0 : PR_MAX((tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp))
 
 struct nsStyleBorder: public nsStyleStruct {
   nsStyleBorder(nsPresContext* aContext);
@@ -538,7 +529,7 @@ struct nsStyleOutline: public nsStyleStruct {
   {
     if (mOutlineOffset.GetUnit() == eStyleUnit_Coord) {
       nscoord offset = mOutlineOffset.GetCoordValue();
-      aOffset = NS_ROUND_OFFSET_TO_PIXELS(offset, mTwipsPerPixel);
+      aOffset = NS_ROUND_BORDER_TO_PIXELS(offset, mTwipsPerPixel);
       return PR_TRUE;
     } else {
       NS_NOTYETIMPLEMENTED("GetOutlineOffset: eStyleUnit_Chars");
@@ -567,7 +558,7 @@ struct nsStyleOutline: public nsStyleStruct {
     mOutlineStyle |= (aStyle & BORDER_STYLE_MASK);
   }
 
-  // PR_FALSE means initial value
+  // PR_FALSE means INVERT 
   PRBool GetOutlineColor(nscolor& aColor) const
   {
     if ((mOutlineStyle & BORDER_COLOR_SPECIAL) == 0) {
@@ -583,14 +574,14 @@ struct nsStyleOutline: public nsStyleStruct {
     mOutlineStyle &= ~BORDER_COLOR_SPECIAL;
   }
 
-  void SetOutlineInitialColor()
+  void SetOutlineInvert(void)
   {
-    mOutlineStyle |= OUTLINE_COLOR_INITIAL;
+    mOutlineStyle |= BORDER_COLOR_SPECIAL;
   }
 
-  PRBool GetOutlineInitialColor() const
+  PRBool  GetOutlineInvert(void) const
   {
-    return (mOutlineStyle & OUTLINE_COLOR_INITIAL);
+    return(mOutlineStyle & BORDER_COLOR_SPECIAL);
   }
 
 protected:

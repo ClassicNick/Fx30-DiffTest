@@ -45,7 +45,6 @@
 #include "nsContentUtils.h"
 #include "nsXPIDLString.h"
 #include "nsCRT.h"
-#include "nsPresContext.h"
 
 nsROCSSPrimitiveValue::nsROCSSPrimitiveValue(float aT2P)
   : mType(CSS_PX), mT2P(aT2P)
@@ -126,6 +125,34 @@ nsROCSSPrimitiveValue::GetCssText(nsAString& aCssText)
         float val = NSTwipsToFloatPixels(mValue.mTwips, mT2P);
         tmpStr.AppendFloat(val);
         tmpStr.AppendLiteral("px");
+        break;
+      }
+    case CSS_CM :
+      {
+        float val = NS_TWIPS_TO_CENTIMETERS(mValue.mTwips);
+        tmpStr.AppendFloat(val);
+        tmpStr.AppendLiteral("cm");
+        break;
+      }
+    case CSS_MM :
+      {
+        float val = NS_TWIPS_TO_MILLIMETERS(mValue.mTwips);
+        tmpStr.AppendFloat(val);
+        tmpStr.AppendLiteral("mm");
+        break;
+      }
+    case CSS_IN :
+      {
+        float val = NS_TWIPS_TO_INCHES(mValue.mTwips);
+        tmpStr.AppendFloat(val);
+        tmpStr.AppendLiteral("in");
+        break;
+      }
+    case CSS_PT :
+      {
+        float val = NSTwipsToFloatPoints(mValue.mTwips);
+        tmpStr.AppendFloat(val);
+        tmpStr.AppendLiteral("pt");
         break;
       }
     case CSS_IDENT :
@@ -260,10 +287,6 @@ nsROCSSPrimitiveValue::GetCssText(nsAString& aCssText)
 
         break;
       }
-    case CSS_CM :
-    case CSS_MM :
-    case CSS_IN :
-    case CSS_PT :
     case CSS_PC :
     case CSS_UNKNOWN :
     case CSS_EMS :

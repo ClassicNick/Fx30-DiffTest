@@ -52,10 +52,9 @@ class nsIContent;
 class nsIDOMElement;
 class nsIArray;
 
-// 35dfc2a6-b069-4014-ad4b-01927e77d828
 #define NS_IINSPECTORCSSUTILS_IID \
-  { 0x35dfc2a6, 0xb069, 0x4014, \
-    {0xad, 0x4b, 0x01, 0x92, 0x7e, 0x77, 0xd8, 0x28 } }
+  { 0xdf2072d2, 0x57f0, 0x4c62, \
+    {0xa7, 0x3f, 0xa5, 0x2f, 0xf2, 0xf0, 0x99, 0xa6 } }
 
 // 7ef2f07f-6e34-410b-8336-88acd1cd16b7
 #define NS_INSPECTORCSSUTILS_CID \
@@ -77,7 +76,7 @@ public:
     NS_IMETHOD GetRuleNodeRule(nsRuleNode *aNode, nsIStyleRule **aRule) = 0;
     NS_IMETHOD IsRuleNodeRoot(nsRuleNode *aNode, PRBool *aIsRoot) = 0;
 
-	// Hooks to avoid having to use nsStyleCoord.
+    // Hooks to avoid having to use nsStyleCoord.
     NS_IMETHOD AdjustRectForMargins(nsIFrame* aFrame, nsRect& aRect) = 0;
 
     // Hooks to methods that need nsStyleContext

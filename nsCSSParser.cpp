@@ -78,7 +78,6 @@
 #include "nsPrintfCString.h"
 #include "nsIMediaList.h"
 #include "nsILookAndFeel.h"
-#include "nsStyleUtil.h"
 
 #include "prprf.h"
 #include "math.h"
@@ -2399,8 +2398,6 @@ CSSParserImpl::ParseAttributeSelector(PRInt32&       aDataMask,
               "onmousemove",
               "onmouseout",
               "onmouseup",
-              "onoffline",
-              "ononline",
               "onreset",
               "onselect",
               "onsubmit",
@@ -3154,7 +3151,7 @@ PRBool CSSParserImpl::ParseColorOpacity(nsresult& aErrorCode, PRUint8& aOpacity)
     return PR_FALSE;
   }
 
-  PRInt32 value = nsStyleUtil::FloatToColorComponent(mToken.mNumber);
+  PRInt32 value = NSToIntRound(mToken.mNumber*255);
 
   if (!ExpectSymbol(aErrorCode, ')', PR_TRUE)) {
     REPORT_UNEXPECTED_TOKEN(PEExpectedCloseParen);
@@ -5799,11 +5796,7 @@ PRBool CSSParserImpl::ParseOutline(nsresult& aErrorCode)
 
   // Provide default values
   if ((found & 1) == 0) {
-#ifdef GFX_HAS_INVERT
     values[0].SetIntValue(NS_STYLE_COLOR_INVERT, eCSSUnit_Enumerated);
-#else
-    values[0].SetIntValue(NS_STYLE_COLOR_MOZ_USE_TEXT_COLOR, eCSSUnit_Enumerated);
-#endif
   }
   if ((found & 2) == 0) {
     values[1].SetNoneValue();

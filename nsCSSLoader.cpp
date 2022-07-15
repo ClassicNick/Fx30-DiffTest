@@ -82,7 +82,7 @@
 #include "nsGkAtoms.h"
 
 #ifdef MOZ_XUL
-#include "nsXULPrototypeCache.h"
+#include "nsIXULPrototypeCache.h"
 #endif
 
 #include "nsIMediaList.h"
@@ -972,10 +972,12 @@ CSSLoaderImpl::CreateSheet(nsIURI* aURI,
     // First, the XUL cache
 #ifdef MOZ_XUL
     if (IsChromeURI(aURI)) {
-      nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
+      nsCOMPtr<nsIXULPrototypeCache> cache(do_GetService("@mozilla.org/xul/xul-prototype-cache;1"));
       if (cache) {
-        if (cache->IsEnabled()) {
-          sheet = cache->GetStyleSheet(aURI);
+        PRBool enabled;
+        cache->GetEnabled(&enabled);
+        if (enabled) {
+          cache->GetStyleSheet(aURI, getter_AddRefs(sheet));
           LOG(("  From XUL cache: %p", sheet.get()));
         }
       }
@@ -1118,6 +1120,7 @@ CSSLoaderImpl::InsertSheetInDoc(nsICSSStyleSheet* aSheet,
   NS_PRECONDITION(aDocument, "Must have a document to insert into");
 
   // all nodes that link in sheets should be implementing nsIDOM3Node
+  nsresult rv = NS_OK;
 
   // XXX Need to cancel pending sheet loads for this element, if any
 
@@ -1544,11 +1547,17 @@ CSSLoaderImpl::SheetComplete(SheetLoadData* aLoadData, nsresult aStatus)
   if (NS_SUCCEEDED(aStatus) && aLoadData->mURI) {
 #ifdef MOZ_XUL
     if (IsChromeURI(aLoadData->mURI)) {
-      nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
-      if (cache && cache->IsEnabled()) {
-        if (!cache->GetStyleSheet(aLoadData->mURI)) {
-          LOG(("  Putting sheet in XUL prototype cache"));
-          cache->PutStyleSheet(aLoadData->mSheet);
+      nsCOMPtr<nsIXULPrototypeCache> cache(do_GetService("@mozilla.org/xul/xul-prototype-cache;1"));
+      if (cache) {
+        PRBool enabled;
+        cache->GetEnabled(&enabled);
+        if (enabled) {
+          nsCOMPtr<nsICSSStyleSheet> sheet;
+          cache->GetStyleSheet(aLoadData->mURI, getter_AddRefs(sheet));
+          if (!sheet) {
+            LOG(("  Putting sheet in XUL prototype cache"));
+            cache->PutStyleSheet(aLoadData->mSheet);
+          }
         }
       }
     }

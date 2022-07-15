@@ -471,10 +471,10 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
   nsRuleNode* lastHTMLPresHintRN = mRuleWalker->GetCurrentNode();
   
   PRBool cutOffInheritance = PR_FALSE;
-  if (mBindingManager) {
+  if (mStyleRuleSupplier) {
     // We can supply additional document-level sheets that should be walked.
-    mBindingManager->WalkRules(this, aCollectorFunc, aData,
-                               &cutOffInheritance);
+    mStyleRuleSupplier->WalkRules(this, aCollectorFunc, aData,
+                                  &cutOffInheritance);
   }
   if (!cutOffInheritance && mRuleProcessors[eDocSheet]) // NOTE: different
     (*aCollectorFunc)(mRuleProcessors[eDocSheet], aData);
@@ -520,9 +520,9 @@ nsStyleSet::WalkRuleProcessors(nsIStyleRuleProcessor::EnumFunc aFunc,
     (*aFunc)(mRuleProcessors[eHTMLPresHintSheet], aData);
   
   PRBool cutOffInheritance = PR_FALSE;
-  if (mBindingManager) {
+  if (mStyleRuleSupplier) {
     // We can supply additional document-level sheets that should be walked.
-    mBindingManager->WalkRules(this, aFunc, aData, &cutOffInheritance);
+    mStyleRuleSupplier->WalkRules(this, aFunc, aData, &cutOffInheritance);
   }
   if (!cutOffInheritance && mRuleProcessors[eDocSheet]) // NOTE: different
     (*aFunc)(mRuleProcessors[eDocSheet], aData);

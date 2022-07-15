@@ -78,16 +78,6 @@ public:
                                 
   static void EscapeCSSString(const nsString& aString, nsAString& aReturn);
 
-  /*
-   * Convert an author-provided floating point number to an integer (0
-   * ... 255) appropriate for use in the alpha component of a color.
-   */
-  static PRUint8 FloatToColorComponent(float aAlpha)
-  {
-    NS_ASSERTION(0.0 <= aAlpha && aAlpha <= 1.0, "out of range");
-    return NSToIntRound(aAlpha * 255);
-  }
-
 };
 
 

@@ -105,7 +105,9 @@ public:
 
   void SetTwips(float aValue)
   {
-    SetTwips(NSToCoordRound(aValue));
+    Reset();
+    mValue.mTwips = nscoord(aValue);
+    mType = CSS_PX;
   }
 
   void SetIdent(nsIAtom* aAtom)
