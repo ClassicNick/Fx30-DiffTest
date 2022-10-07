@@ -513,9 +513,7 @@ nsObjectFrame::Init(nsIContent*      aContent,
                     nsIFrame*        aParent,
                     nsIFrame*        aPrevInFlow)
 {
-#ifdef DEBUG
   mInstantiating = PR_FALSE;
-#endif
 
   return nsObjectFrameSuper::Init(aContent, aParent, aPrevInFlow);
 }
@@ -530,6 +528,22 @@ nsObjectFrame::Destroy()
   StopPluginInternal(PR_TRUE);
   
   nsObjectFrameSuper::Destroy();
+}
+
+NS_IMETHODIMP
+nsObjectFrame::DidSetStyleContext()
+{
+  if (HasView()) {
+    nsIView* view = GetView();
+    nsIViewManager* vm = view->GetViewManager();
+    if (vm) {
+      nsViewVisibility visibility = 
+        IsHidden() ? nsViewVisibility_kHide : nsViewVisibility_kShow;
+      vm->SetViewVisibility(view, visibility);
+    }
+  }
+
+  return nsObjectFrameSuper::DidSetStyleContext();
 }
 
 nsIAtom*
@@ -607,7 +621,9 @@ nsObjectFrame::CreateWidget(nscoord aWidth,
 
   }
 
-  viewMan->SetViewVisibility(view, nsViewVisibility_kShow);
+  if (!IsHidden()) {
+    viewMan->SetViewVisibility(view, nsViewVisibility_kShow);
+  }
 
   return NS_OK;
 }
@@ -753,9 +769,8 @@ nsObjectFrame::InstantiatePlugin(nsIPluginHost* aPluginHost,
     appShell->SuspendNative();
   }
 
-#ifdef DEBUG
+  NS_PRECONDITION(!mInstantiating, "How did that happen?");
   mInstantiating = PR_TRUE;
-#endif
 
   NS_ASSERTION(mContent, "We should have a content node.");
 
@@ -774,9 +789,7 @@ nsObjectFrame::InstantiatePlugin(nsIPluginHost* aPluginHost,
     rv = aPluginHost->InstantiateEmbeddedPlugin(aMimeType, aURI,
                                                 mInstanceOwner);
   }
-#ifdef DEBUG
   mInstantiating = PR_FALSE;
-#endif
 
   if (appShell) {
     appShell->ResumeNative();
@@ -1106,8 +1119,8 @@ nsObjectFrame::PrintPlugin(nsIRenderingContext& aRenderingContext,
 
   // set it all up
   // XXX is windowless different?
-  window.x = origin.x;
-  window.y = origin.y;
+  window.x = presContext->AppUnitsToDevPixels(origin.x);
+  window.y = presContext->AppUnitsToDevPixels(origin.y);
   window.width = presContext->AppUnitsToDevPixels(mRect.width);
   window.height= presContext->AppUnitsToDevPixels(mRect.height);
   window.clipRect.bottom = 0; window.clipRect.top = 0;
@@ -1226,7 +1239,7 @@ nsObjectFrame::PaintPlugin(nsIRenderingContext& aRenderingContext,
        * to tell the plugin where it is, we dispatch a NPWindow through
        * |HandleEvent| to tell the plugin when its window moved
        */
-      nsRefPtr<gfxContext> ctx = (gfxContext*)aRenderingContext.GetNativeGraphicData(nsIRenderingContext::NATIVE_THEBES_CONTEXT);
+      nsRefPtr<gfxContext> ctx = aRenderingContext.ThebesContext();
       gfxMatrix ctxMatrix = ctx->CurrentMatrix();
       if (ctxMatrix.HasNonTranslation()) {
         // soo; in the future, we should be able to render
@@ -1374,8 +1387,9 @@ nsresult nsObjectFrame::GetPluginInstance(nsIPluginInstance*& aPluginInstance)
 nsresult
 nsObjectFrame::PrepareInstanceOwner()
 {
-  // Our content node should have taken care of stopping the
-  // previously loaded plugin (if any)
+  // First, have to stop any possibly running plugins.
+  StopPluginInternal(PR_FALSE);
+
   NS_ASSERTION(!mInstanceOwner, "Must not have an instance owner here");
 
   mInstanceOwner = new nsPluginInstanceOwner();
@@ -1384,12 +1398,17 @@ nsObjectFrame::PrepareInstanceOwner()
 
   NS_ADDREF(mInstanceOwner);
   mInstanceOwner->Init(PresContext(), this, GetContent());
+
   return NS_OK;
 }
 
 nsresult
 nsObjectFrame::Instantiate(nsIChannel* aChannel, nsIStreamListener** aStreamListener)
 {
+  if (mInstantiating) {
+    return NS_OK;
+  }
+  
   nsresult rv = PrepareInstanceOwner();
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1401,7 +1420,10 @@ nsObjectFrame::Instantiate(nsIChannel* aChannel, nsIStreamListener** aStreamList
   // This must be done before instantiating the plugin
   FixupWindow(mRect.Size());
 
+  NS_ASSERTION(!mInstantiating, "Say what?");
+  mInstantiating = PR_TRUE;
   rv = pluginHost->InstantiatePluginForChannel(aChannel, mInstanceOwner, aStreamListener);
+  mInstantiating = PR_FALSE;
 
   return rv;
 }
@@ -1409,6 +1431,10 @@ nsObjectFrame::Instantiate(nsIChannel* aChannel, nsIStreamListener** aStreamList
 nsresult
 nsObjectFrame::Instantiate(const char* aMimeType, nsIURI* aURI)
 {
+  if (mInstantiating) {
+    return NS_OK;
+  }
+  
   NS_ASSERTION(aMimeType || aURI, "Need a type or a URI!");
   nsresult rv = PrepareInstanceOwner();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1544,10 +1570,7 @@ nsObjectFrame::StopPluginInternal(PRBool aDelayedStop)
     return;
   }
 
-  nsRefPtr<nsPluginInstanceOwner> owner;
-  owner.swap(mInstanceOwner);
-
-  owner->PrepareToStop(aDelayedStop);
+  mInstanceOwner->PrepareToStop(aDelayedStop);
 
 #ifdef XP_WIN
   // We only deal with delayed stopping of plugins on Win32 for now,
@@ -1555,8 +1578,8 @@ nsObjectFrame::StopPluginInternal(PRBool aDelayedStop)
   // unclear how safe widget parenting is on other platforms.
   if (aDelayedStop) {
     // nsStopPluginRunnable will hold a strong reference to
-    // owner, and thus keep it alive as long as it needs it.
-    nsCOMPtr<nsIRunnable> evt = new nsStopPluginRunnable(owner);
+    // mInstanceOwner, and thus keep it alive as long as it needs it.
+    nsCOMPtr<nsIRunnable> evt = new nsStopPluginRunnable(mInstanceOwner);
     NS_DispatchToCurrentThread(evt);
 
     // If we're asked to do a delayed stop it means we're stopping the
@@ -1570,13 +1593,17 @@ nsObjectFrame::StopPluginInternal(PRBool aDelayedStop)
   } else
 #endif
   {
-    DoStopPlugin(owner);
-    // Stopping the plugin may have destroyed the frame.
-    // Do not touch any member variables after this line.
+    DoStopPlugin(mInstanceOwner);
   }
 
   // Break relationship between frame and plugin instance owner
-  owner->SetOwner(nsnull);
+  mInstanceOwner->SetOwner(nsnull);
+
+  NS_RELEASE(mInstanceOwner);
+
+  // Make sure that our windowless rect has been zeroed out, so if we
+  // get reinstantiated we'll send the right messages to the plug-in.
+  mWindowlessRect.Empty();
 }
 
 void
@@ -1627,10 +1654,13 @@ nsObjectFrame::NotifyContentObjectWrapper()
   if (NS_FAILED(rv))
     return;
 
-  // Abuse the scriptable helper to trigger prototype setup for the
-  // wrapper for mContent so that this plugin becomes part of the DOM
-  // object.
-  helper->PostCreate(wrapper, cx, obj);
+  nsCxPusher cxPusher;
+  if (cxPusher.Push(mContent)) {
+    // Abuse the scriptable helper to trigger prototype setup for the
+    // wrapper for mContent so that this plugin becomes part of the DOM
+    // object.
+    helper->PostCreate(wrapper, cx, obj);
+  }
 }
 
 // static
@@ -1997,7 +2027,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::InvalidateRect(nsPluginRect *invalidRect)
 {
   nsresult rv = NS_ERROR_FAILURE;
 
-  if (mOwner && invalidRect) {
+  if (mOwner && invalidRect && mWidgetVisible) {
     //no reference count on view
     nsIView* view = mOwner->GetView();
 
@@ -3510,12 +3540,8 @@ nsPluginInstanceOwner::Destroy()
 void
 nsPluginInstanceOwner::PrepareToStop(PRBool aDelayedStop)
 {
-  if (!mWidget) {
-    return;
-  }
-
 #ifdef XP_WIN
-  if (aDelayedStop) {
+  if (aDelayedStop && mWidget) {
     // To delay stopping a plugin we need to reparent the plugin
     // so that we can safely tear down the
     // plugin after its frame (and view) is gone.

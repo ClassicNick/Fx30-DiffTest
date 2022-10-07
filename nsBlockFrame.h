@@ -37,8 +37,8 @@
  * ***** END LICENSE BLOCK ***** */
 
 /*
- * rendering object for CSS display:block and display:list-item objects,
- * also used inside table cells
+ * rendering object for CSS display:block, inline-block, and list-item
+ * boxes, also used for various anonymous boxes
  */
 
 #ifndef nsBlockFrame_h___
@@ -109,6 +109,12 @@ class nsIntervalSet;
  */
 
 // see nsHTMLParts.h for the public block state bits
+
+/**
+ * Something in the block has changed that requires Bidi resolution to be
+ * performed on the block. This flag must be either set on all blocks in a 
+ * continuation chain or none of them.
+ */
 #define NS_BLOCK_NEEDS_BIDI_RESOLUTION      0x00100000 
 #define NS_BLOCK_HAS_LINE_CURSOR            0x01000000
 #define NS_BLOCK_HAS_OVERFLOW_LINES         0x02000000
@@ -186,7 +192,8 @@ public:
   virtual PRBool IsFrameOfType(PRUint32 aFlags) const
   {
     return nsContainerFrame::IsFrameOfType(aFlags &
-             ~(nsIFrame::eCanContainOverflowContainers));
+             ~(nsIFrame::eCanContainOverflowContainers |
+               nsIFrame::eBlockFrame));
   }
 
 #ifdef DEBUG
@@ -235,6 +242,8 @@ public:
   virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
   virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
 
+  virtual nsRect ComputeTightBounds(gfxContext* aContext) const;
+  
   NS_IMETHOD Reflow(nsPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
@@ -273,9 +282,6 @@ public:
   // Create a contination for aPlaceholder and its out of flow frame and
   // add it to the list of overflow floats
   nsresult SplitPlaceholder(nsBlockReflowState& aState, nsIFrame* aPlaceholder);
-
-  void UndoSplitPlaceholders(nsBlockReflowState& aState,
-                             nsIFrame*           aLastPlaceholder);
   
   PRBool HandleOverflowPlaceholdersForPulledFrame(
     nsBlockReflowState& aState, nsIFrame* aFrame);
@@ -285,6 +291,26 @@ public:
 
   static PRBool BlockIsMarginRoot(nsIFrame* aBlock);
   static PRBool BlockNeedsSpaceManager(nsIFrame* aBlock);
+
+  /**
+   * Returns whether aFrame is a block frame that will wrap its contents
+   * around floats intruding on it from the outside.  (aFrame need not
+   * be a block frame, but if it's not, the result will be false.)
+   */
+  static PRBool BlockCanIntersectFloats(nsIFrame* aFrame);
+
+  /**
+   * Returns the width that needs to be cleared past floats for blocks
+   * that cannot intersect floats.
+   */
+  static nscoord WidthToClearPastFloats(nsBlockReflowState& aState,
+                                        nsIFrame* aFrame);
+
+  /**
+   * Walks up the frame tree, starting with aCandidate, and returns the first
+   * block frame that it encounters.
+   */
+  static nsBlockFrame* GetNearestAncestorBlock(nsIFrame* aCandidate);
   
 protected:
   nsBlockFrame(nsStyleContext* aContext)
@@ -322,6 +348,7 @@ protected:
                                        const PRUint8 aDecoration);
 
   void TryAllLines(nsLineList::iterator* aIterator,
+                   nsLineList::iterator* aStartIterator,
                    nsLineList::iterator* aEndIterator,
                    PRBool* aInOverflowLines);
 
@@ -439,14 +466,16 @@ protected:
                       PRBool* aKeepReflowGoing);
 
   // Return PR_TRUE if aLine gets pushed.
-  PRBool PlaceLine(nsBlockReflowState& aState,
-                   nsLineLayout&       aLineLayout,
-                   line_iterator       aLine,
-                   PRBool*             aKeepReflowGoing);
+  void PlaceLine(nsBlockReflowState& aState,
+                 nsLineLayout&       aLineLayout,
+                 line_iterator       aLine,
+                 PRBool*             aKeepReflowGoing);
 
   /**
    * Mark |aLine| dirty, and, if necessary because of possible
-   * pull-up, mark the previous line dirty as well.
+   * pull-up, mark the previous line dirty as well. Also invalidates textruns
+   * on those lines because the text in the lines might have changed due to
+   * addition/removal of frames.
    */
   nsresult MarkLineDirty(line_iterator aLine);
 
@@ -504,7 +533,6 @@ protected:
   // placeholders on the same line that were continued. Set aKeepReflowGoing to false. 
   void PushTruncatedPlaceholderLine(nsBlockReflowState& aState,
                                     line_iterator       aLine,
-                                    nsIFrame*           aLastPlaceholder,
                                     PRBool&             aKeepReflowGoing);
 
   nsresult SplitLine(nsBlockReflowState& aState,
@@ -662,9 +690,10 @@ private:
 class nsBlockInFlowLineIterator {
 public:
   typedef nsBlockFrame::line_iterator line_iterator;
-  nsBlockInFlowLineIterator(nsBlockFrame* aFrame, line_iterator& aLine, PRBool aInOverflow);
-
+  nsBlockInFlowLineIterator(nsBlockFrame* aFrame, line_iterator aLine, PRBool aInOverflow);
+  
   line_iterator GetLine() { return mLine; }
+  PRBool IsLastLineInList();
   nsBlockFrame* GetContainer() { return mFrame; }
   PRBool GetInOverflow() { return mInOverflowLines != nsnull; }
   /**

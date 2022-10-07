@@ -109,8 +109,9 @@ public:
   PRBool PlaceBelowCurrentLineFloats(nsFloatCacheFreeList& aFloats, PRBool aForceFit);
 
   // Returns the first coordinate >= aY that clears the
-  // indicated floats.
-  nscoord ClearFloats(nscoord aY, PRUint8 aBreakType);
+  // floats indicated by aBreakType and has enough width between floats
+  // (or no floats remaining) to accomodate aReplacedWidth.
+  nscoord ClearFloats(nscoord aY, PRUint8 aBreakType, nscoord aReplacedWidth = 0);
 
   PRBool IsAdjacentWithTop() const {
     return mY ==
@@ -286,9 +287,7 @@ public:
   PRBool GetFlag(PRUint32 aFlag) const
   {
     NS_ASSERTION(aFlag<=BRS_LASTFLAG, "bad flag");
-    PRBool result = (mFlags & aFlag);
-    if (result) return PR_TRUE;
-    return PR_FALSE;
+    return !!(mFlags & aFlag);
   }
 };
 

@@ -92,6 +92,8 @@ class nsDisplayListSet;
 class nsDisplayList;
 class gfxSkipChars;
 class gfxSkipCharsIterator;
+class gfxContext;
+class nsLineList_iterator;
 
 struct nsPeekOffsetStruct;
 struct nsPoint;
@@ -101,11 +103,11 @@ struct nsMargin;
 
 typedef class nsIFrame nsIBox;
 
-// IID for the nsIFrame interface 
-// 39681dd7-5db6-4e38-b84c-5d9a163c987a
-#define NS_IFRAME_IID \
-{ 0x39681dd7, 0x5db6, 0x4e38, \
-  { 0xb8, 0x4c, 0x5d, 0x9a, 0x16, 0x3c, 0x98, 0x7a } }
+// IID for the nsIFrame interface
+// 04a7dee5-3435-47dc-bd42-a36c0f66a42c
+  #define NS_IFRAME_IID \
+{ 0x04a7dee5, 0x3435, 0x47dc, \
+  { 0xbd, 0x42, 0xa3, 0x6c, 0x0f, 0x66, 0xa4, 0x2c } }
 
 /**
  * Indication of how the frame can be split. This is used when doing runaround
@@ -639,16 +641,7 @@ public:
    * The use of the typesafe functions below is preferred to direct use
    * of this function.
    */
-  virtual const nsStyleStruct* GetStyleDataExternal(nsStyleStructID aSID) const = 0;
-
-  const nsStyleStruct* GetStyleData(nsStyleStructID aSID) const {
-#ifdef _IMPL_NS_LAYOUT
-    NS_ASSERTION(mStyleContext, "No style context found!");
-    return mStyleContext->GetStyleData(aSID);
-#else
-    return GetStyleDataExternal(aSID);
-#endif
-  }
+  virtual const void* GetStyleDataExternal(nsStyleStructID aSID) const = 0;
 
   /**
    * Define typesafe getter functions for each style struct by
@@ -1065,7 +1058,14 @@ public:
   virtual nsIFrame* GetLastContinuation() const {
     return const_cast<nsIFrame*>(this);
   }
-  
+
+  /**
+   * GetTailContinuation gets the last non-overflow-container continuation
+   * in the continuation chain, i.e. where the next sibling element
+   * should attach).
+   */
+  nsIFrame* GetTailContinuation();
+
   /**
    * Flow member functions
    */
@@ -1137,11 +1137,16 @@ public:
    */
   struct InlineIntrinsicWidthData {
     InlineIntrinsicWidthData()
-      : prevLines(0)
+      : line(nsnull)
+      , prevLines(0)
       , currentLine(0)
       , skipWhitespace(PR_TRUE)
       , trailingWhitespace(0)
     {}
+
+    // The line. This may be null if the inlines are not associated with
+    // a block or if we just don't know the line.
+    const nsLineList_iterator* line;
 
     // The maximum intrinsic width for all previous lines.
     nscoord prevLines;
@@ -1152,8 +1157,8 @@ public:
     nscoord currentLine;
 
     // True if initial collapsable whitespace should be skipped.  This
-    // should be true at the beginning of a block and when the last text
-    // ended with whitespace.
+    // should be true at the beginning of a block, after hard breaks
+    // and when the last text ended with whitespace.
     PRBool skipWhitespace;
 
     // This contains the width of the trimmable whitespace at the end of
@@ -1246,6 +1251,29 @@ public:
     IntrinsicWidthOffsets(nsIRenderingContext* aRenderingContext) = 0;
 
   /*
+   * For replaced elements only. Gets the intrinsic dimensions of this element.
+   * The dimensions may only be one of the following three types:
+   *
+   *   eStyleUnit_Coord   - a length in app units
+   *   eStyleUnit_Percent - a percentage of the available space
+   *   eStyleUnit_None    - the element has no intrinsic size in this dimension
+   */
+  struct IntrinsicSize {
+    nsStyleCoord width, height;
+
+    IntrinsicSize()
+      : width(eStyleUnit_None), height(eStyleUnit_None)
+    {}
+    IntrinsicSize(const IntrinsicSize& rhs)
+      : width(rhs.width), height(rhs.height)
+    {}
+    IntrinsicSize& operator=(const IntrinsicSize& rhs) {
+      width = rhs.width; height = rhs.height; return *this;
+    }
+  };
+  virtual IntrinsicSize GetIntrinsicSize() = 0;
+
+  /*
    * Get the intrinsic ratio of this element, or nsSize(0,0) if it has
    * no intrinsic ratio.  The intrinsic ratio is the ratio of the
    * height/width of a box with an intrinsic size or the intrinsic
@@ -1299,6 +1327,16 @@ public:
                              nsSize aCBSize, nscoord aAvailableWidth,
                              nsSize aMargin, nsSize aBorder, nsSize aPadding,
                              PRBool aShrinkWrap) = 0;
+
+  /**
+   * Compute a tight bounding rectangle for the frame. This is a rectangle
+   * that encloses the pixels that are actually drawn. We're allowed to be
+   * conservative and currently we don't try very hard. The rectangle is
+   * in appunits and relative to the origin of this frame.
+   * @param aContext a rendering context that can be used if we need
+   * to do measurement
+   */
+  virtual nsRect ComputeTightBounds(gfxContext* aContext) const;
 
   /**
    * Pre-reflow hook. Before a frame is reflowed this method will be called.
@@ -1391,13 +1429,6 @@ public:
    */
   virtual PRBool CanContinueTextRun() const = 0;
 
-  // Justification helper method that is used to remove trailing
-  // whitespace before justification.
-  NS_IMETHOD TrimTrailingWhiteSpace(nsPresContext* aPresContext,
-                                    nsIRenderingContext& aRC,
-                                    nscoord& aDeltaWidth,
-                                    PRBool& aLastCharIsJustifiable) = 0;
-
   /**
    * Append the rendered text to the passed-in string.
    * The appended text will often not contain all the whitespace from source,
@@ -1425,7 +1456,7 @@ public:
    *
    * GetView returns non-null if and only if |HasView| returns true.
    */
-  PRBool HasView() const { return mState & NS_FRAME_HAS_VIEW; }
+  PRBool HasView() const { return !!(mState & NS_FRAME_HAS_VIEW); }
   nsIView* GetView() const;
   virtual nsIView* GetViewExternal() const;
   nsresult SetView(nsIView* aView);
@@ -1532,7 +1563,7 @@ public:
     eLineParticipant =                  1 << 6,
     eXULBox =                           1 << 7,
     eCanContainOverflowContainers =     1 << 8,
-
+    eBlockFrame =                       1 << 9,
 
     // These are to allow nsFrame::Init to assert that IsFrameOfType
     // implementations all call the base class method.  They are only
@@ -1596,6 +1627,9 @@ public:
    * need to be repainted.
    *
    * @param aDamageRect is in the frame's local coordinate space
+   * @param aImmediate repaint now if true, repaint later if false.
+   *   In case it's true, pending notifications will be flushed which
+   *   could cause frames to be deleted (including |this|).
    */
   void Invalidate(const nsRect& aDamageRect, PRBool aImmediate = PR_FALSE);
 
@@ -1613,6 +1647,9 @@ public:
    * 
    * @param aForChild if the invalidation is coming from a child frame, this
    * is the frame; otherwise, this is null.
+   * @param aImmediate repaint now if true, repaint later if false.
+   *   In case it's true, pending notifications will be flushed which
+   *   could cause frames to be deleted (including |this|).
    */  
   virtual void InvalidateInternal(const nsRect& aDamageRect,
                                   nscoord aOffsetX, nscoord aOffsetY,
@@ -1681,9 +1718,15 @@ public:
   NS_IMETHOD  GetSelectionController(nsPresContext *aPresContext, nsISelectionController **aSelCon) = 0;
 
   /**
-   *  Call to get nsFrameSelection for this frame; does not addref
+   *  Call to get nsFrameSelection for this frame.
    */
-  nsFrameSelection* GetFrameSelection();
+  already_AddRefed<nsFrameSelection> GetFrameSelection();
+
+  /**
+   * GetConstFrameSelection returns an object which methods are safe to use for
+   * example in nsIFrame code.
+   */
+  const nsFrameSelection* GetConstFrameSelection();
 
   /** EndSelection related calls
    */
@@ -2124,6 +2167,9 @@ protected:
     PRPackedBool mSawBeforeType;
     // true when the last character encountered was punctuation
     PRPackedBool mLastCharWasPunctuation;
+    // text that's *before* the current frame when aForward is true, *after*
+    // the current frame when aForward is false.
+    nsAutoString mContext;
 
     PeekWordState() : mAtStart(PR_TRUE), mSawBeforeType(PR_FALSE),
         mLastCharWasPunctuation(PR_FALSE) {}
@@ -2167,6 +2213,8 @@ private:
 
 class nsWeakFrame {
 public:
+  nsWeakFrame() : mPrev(nsnull), mFrame(nsnull) { }
+
   nsWeakFrame(nsIFrame* aFrame) : mPrev(nsnull), mFrame(nsnull)
   {
     Init(aFrame);

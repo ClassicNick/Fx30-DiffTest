@@ -185,7 +185,8 @@ public:
   }
 #endif
 
-  virtual nsIFrame* HitTest(nsDisplayListBuilder* aBuilder, nsPoint aPt) { return mFrame; }
+  virtual nsIFrame* HitTest(nsDisplayListBuilder* aBuilder, nsPoint aPt,
+                            HitTestState* aState) { return mFrame; }
   virtual void Paint(nsDisplayListBuilder* aBuilder, nsIRenderingContext* aCtx,
      const nsRect& aDirtyRect);
   NS_DISPLAY_DECL_NAME("Bullet")
@@ -290,7 +291,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
 
   case NS_STYLE_LIST_STYLE_HEBREW:
     aRenderingContext.GetHints(hints);
-    isBidiSystem = (hints & NS_RENDERING_HINT_BIDI_REORDERING);
+    isBidiSystem = !!(hints & NS_RENDERING_HINT_BIDI_REORDERING);
     if (!isBidiSystem) {
       if (GetListItemText(*myList, text)) {
          charType = eCharType_RightToLeft;
@@ -401,7 +402,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
       else {
 //Mohamed
         aRenderingContext.GetHints(hints);
-        isBidiSystem = (hints & NS_RENDERING_HINT_ARABIC_SHAPING);
+        isBidiSystem = !!(hints & NS_RENDERING_HINT_ARABIC_SHAPING);
         bidiUtils->FormatUnicodeText(presContext, (PRUnichar*)buffer, textLength,
                                      charType, level, isBidiSystem, isNewTextRunSystem);//Mohamed
       }
@@ -1562,6 +1563,12 @@ nsBulletFrame::Reflow(nsPresContext* aPresContext,
   aMetrics.height += borderPadding.top + borderPadding.bottom;
   aMetrics.ascent += borderPadding.top;
 
+  // XXX this is a bit of a hack, we're assuming that no glyphs used for bullets
+  // overflow their font-boxes. It'll do for now; to fix it for real, we really
+  // should rewrite all the text-handling code here to use gfxTextRun (bug
+  // 397294).
+  aMetrics.mOverflowArea.SetRect(0, 0, aMetrics.width, aMetrics.height);
+  
   aStatus = NS_FRAME_COMPLETE;
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aMetrics);
   return NS_OK;

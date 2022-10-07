@@ -107,6 +107,8 @@ public:
 
   virtual void Destroy();
 
+  NS_IMETHOD DidSetStyleContext();
+
   NS_IMETHOD GetPluginInstance(nsIPluginInstance*& aPluginInstance);
   virtual nsresult Instantiate(nsIChannel* aChannel, nsIStreamListener** aStreamListener);
   virtual nsresult Instantiate(const char* aMimeType, nsIURI* aURI);
@@ -191,11 +193,10 @@ private:
   nsPluginInstanceOwner *mInstanceOwner;
   nsRect                mWindowlessRect;
 
-#ifdef DEBUG
   // For assertions that make it easier to determine if a crash is due
-  // to the underlying problem described in bug 136927.
+  // to the underlying problem described in bug 136927, and to prevent
+  // reentry into instantiation.
   PRBool mInstantiating;
-#endif
 };
 
 
