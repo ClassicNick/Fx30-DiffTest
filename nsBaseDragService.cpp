@@ -47,33 +47,14 @@
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsCOMPtr.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "nsIFrame.h"
 #include "nsIDocument.h"
 #include "nsIContent.h"
 #include "nsIPresShell.h"
 #include "nsIViewManager.h"
-#include "nsIScrollableView.h"
 #include "nsIDOMNode.h"
-#include "nsIDOMMouseEvent.h"
-#include "nsISelection.h"
-#include "nsISelectionPrivate.h"
 #include "nsPresContext.h"
-#include "nsIEventStateManager.h"
-#include "nsICanvasElement.h"
-#include "nsIImage.h"
-#include "nsIImageLoadingContent.h"
-#include "gfxIImageFrame.h"
-#include "imgIContainer.h"
-#include "imgIRequest.h"
-#include "nsIViewObserver.h"
-#include "nsRegion.h"
 
-#ifdef MOZ_CAIRO_GFX
-#include "gfxContext.h"
-#include "gfxImageSurface.h"
-
-#endif
 
 NS_IMPL_ADDREF(nsBaseDragService)
 NS_IMPL_RELEASE(nsBaseDragService)
@@ -86,9 +67,8 @@ NS_IMPL_QUERY_INTERFACE2(nsBaseDragService, nsIDragService, nsIDragSession)
 //
 //-------------------------------------------------------------------------
 nsBaseDragService::nsBaseDragService()
-  : mCanDrop(PR_FALSE), mDoingDrag(PR_FALSE), mHasImage(PR_FALSE),
-    mDragAction(DRAGDROP_ACTION_NONE), mTargetSize(0,0),
-    mImageX(0), mImageY(0), mScreenX(-1), mScreenY(-1)
+  : mCanDrop(PR_FALSE), mDoingDrag(PR_FALSE),
+    mDragAction(DRAGDROP_ACTION_NONE), mTargetSize(0,0)
 {
 }
 
@@ -208,11 +188,12 @@ nsBaseDragService::IsDataFlavorSupported(const char *aDataFlavor,
   return NS_ERROR_FAILURE;
 }
 
+
 //-------------------------------------------------------------------------
 NS_IMETHODIMP
 nsBaseDragService::InvokeDragSession(nsIDOMNode *aDOMNode,
-                                     nsISupportsArray* aTransferableArray,
-                                     nsIScriptableRegion* aDragRgn,
+                                     nsISupportsArray * anArrayTransferables,
+                                     nsIScriptableRegion * aRegion,
                                      PRUint32 aActionType)
 {
   NS_ENSURE_TRUE(aDOMNode, NS_ERROR_INVALID_ARG);
@@ -244,53 +225,6 @@ nsBaseDragService::InvokeDragSession(nsIDOMNode *aDOMNode,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsBaseDragService::InvokeDragSessionWithImage(nsIDOMNode* aDOMNode,
-                                              nsISupportsArray* aTransferableArray,
-                                              nsIScriptableRegion* aRegion,
-                                              PRUint32 aActionType,
-                                              nsIDOMNode* aImage,
-                                              PRInt32 aImageX, PRInt32 aImageY,
-                                              nsIDOMMouseEvent* aDragEvent)
-{
-  NS_ENSURE_TRUE(aDragEvent, NS_ERROR_NULL_POINTER);
-
-  mSelection = nsnull;
-  mHasImage = PR_TRUE;
-  mImage = aImage;
-  mImageX = aImageX;
-  mImageY = aImageY;
-
-  aDragEvent->GetScreenX(&mScreenX);
-  aDragEvent->GetScreenY(&mScreenY);
-
-  return InvokeDragSession(aDOMNode, aTransferableArray, aRegion, aActionType);
-}
-
-NS_IMETHODIMP
-nsBaseDragService::InvokeDragSessionWithSelection(nsISelection* aSelection,
-                                                  nsISupportsArray* aTransferableArray,
-                                                  PRUint32 aActionType,
-                                                  nsIDOMMouseEvent* aDragEvent)
-{
-  NS_ENSURE_TRUE(aSelection, NS_ERROR_NULL_POINTER);
-  NS_ENSURE_TRUE(aDragEvent, NS_ERROR_NULL_POINTER);
-
-  mSelection = aSelection;
-  mHasImage = PR_TRUE;
-  mImage = nsnull;
-  mImageX = 0;
-  mImageY = 0;
-
-  aDragEvent->GetScreenX(&mScreenX);
-  aDragEvent->GetScreenY(&mScreenY);
-
-  // just get the focused node from the selection
-  nsCOMPtr<nsIDOMNode> node;
-  aSelection->GetFocusNode(getter_AddRefs(node));
-
-  return InvokeDragSession(node, aTransferableArray, nsnull, aActionType);
-}
 
 //-------------------------------------------------------------------------
 NS_IMETHODIMP
@@ -335,13 +269,6 @@ nsBaseDragService::EndDragSession()
   // release the source we've been holding on to.
   mSourceDocument = nsnull;
   mSourceNode = nsnull;
-  mSelection = nsnull;
-  mHasImage = PR_FALSE;
-  mImage = nsnull;
-  mImageX = 0;
-  mImageY = 0;
-  mScreenX = -1;
-  mScreenY = -1;
 
   return NS_OK;
 }

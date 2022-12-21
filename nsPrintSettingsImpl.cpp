@@ -74,7 +74,6 @@ nsPrintSettings::nsPrintSettings() :
   mOrientation(kPortraitOrientation),
   mNumCopies(1),
   mPrintToFile(PR_FALSE),
-  mOutputFormat(kOutputFormatNative),
   mIsInitedFromPrinter(PR_FALSE),
   mIsInitedFromPrefs(PR_FALSE)
 {
@@ -351,19 +350,6 @@ NS_IMETHODIMP nsPrintSettings::SetToFileName(const PRUnichar * aToFileName)
   } else {
     mToFileName.SetLength(0);
   }
-  return NS_OK;
-}
-
-/* attribute short outputFormat; */
-NS_IMETHODIMP nsPrintSettings::GetOutputFormat(PRInt16 *aOutputFormat)
-{
-  NS_ENSURE_ARG_POINTER(aOutputFormat);
-  *aOutputFormat = mOutputFormat;
-  return NS_OK;
-}
-NS_IMETHODIMP nsPrintSettings::SetOutputFormat(PRInt16 aOutputFormat)
-{
-  mOutputFormat = aOutputFormat;
   return NS_OK;
 }
 
@@ -1006,7 +992,6 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs)
   mPrinter             = rhs.mPrinter;
   mPrintToFile         = rhs.mPrintToFile;
   mToFileName          = rhs.mToFileName;
-  mOutputFormat        = rhs.mOutputFormat;
   mPrintPageDelay      = rhs.mPrintPageDelay;
 
   for (PRInt32 i=0;i<NUM_HEAD_FOOT;i++) {
