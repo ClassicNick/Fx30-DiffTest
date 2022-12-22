@@ -184,7 +184,7 @@
 // XBL related includes.
 #include "nsIXBLService.h"
 #include "nsXBLBinding.h"
-#include "nsBindingManager.h"
+#include "nsIBindingManager.h"
 #include "nsIFrame.h"
 #include "nsIPresShell.h"
 #include "nsIDOMViewCSS.h"
@@ -444,7 +444,6 @@ static const char kDOMStringBundleURL[] =
   nsIXPCScriptable::WANT_ADDPROPERTY |                                        \
   nsIXPCScriptable::WANT_DELPROPERTY |                                        \
   nsIXPCScriptable::WANT_NEWENUMERATE |                                       \
-  nsIXPCScriptable::WANT_FINALIZE |                                           \
   nsIXPCScriptable::WANT_EQUALITY |                                           \
   nsIXPCScriptable::WANT_OUTER_OBJECT |                                       \
   nsIXPCScriptable::WANT_INNER_OBJECT |                                       \
@@ -905,8 +904,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            ELEMENT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(SVGFEBlendElement, nsElementSH,
                            ELEMENT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CLASSINFO_DATA(SVGFEColorMatrixElement, nsElementSH,
-                           ELEMENT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(SVGFEComponentTransferElement, nsElementSH,
                            ELEMENT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(SVGFECompositeElement, nsElementSH,
@@ -1228,8 +1225,6 @@ jsval nsDOMClassInfo::sOnkeypress_id      = JSVAL_VOID;
 jsval nsDOMClassInfo::sOnmousemove_id     = JSVAL_VOID;
 jsval nsDOMClassInfo::sOnfocus_id         = JSVAL_VOID;
 jsval nsDOMClassInfo::sOnblur_id          = JSVAL_VOID;
-jsval nsDOMClassInfo::sOnonline_id        = JSVAL_VOID;
-jsval nsDOMClassInfo::sOnoffline_id       = JSVAL_VOID;
 jsval nsDOMClassInfo::sOnsubmit_id        = JSVAL_VOID;
 jsval nsDOMClassInfo::sOnreset_id         = JSVAL_VOID;
 jsval nsDOMClassInfo::sOnchange_id        = JSVAL_VOID;
@@ -1421,8 +1416,6 @@ nsDOMClassInfo::DefineStaticJSVals(JSContext *cx)
   SET_JSVAL_TO_STRING(sOnmousemove_id,     cx, "onmousemove");
   SET_JSVAL_TO_STRING(sOnfocus_id,         cx, "onfocus");
   SET_JSVAL_TO_STRING(sOnblur_id,          cx, "onblur");
-  SET_JSVAL_TO_STRING(sOnoffline_id,       cx, "onoffline");
-  SET_JSVAL_TO_STRING(sOnonline_id,        cx, "ononline");
   SET_JSVAL_TO_STRING(sOnsubmit_id,        cx, "onsubmit");
   SET_JSVAL_TO_STRING(sOnreset_id,         cx, "onreset");
   SET_JSVAL_TO_STRING(sOnchange_id,        cx, "onchange");
@@ -2593,13 +2586,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(SVGFEColorMatrixElement, nsIDOMSVGFEColorMatrixElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFEColorMatrixElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFilterPrimitiveStandardAttributes)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGStylable)
-    DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
-  DOM_CLASSINFO_MAP_END
-
   DOM_CLASSINFO_MAP_BEGIN(SVGFEComponentTransferElement, nsIDOMSVGFEComponentTransferElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFEComponentTransferElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFilterPrimitiveStandardAttributes)
@@ -3720,7 +3706,7 @@ nsDOMClassInfo::InnerObject(nsIXPConnectWrappedNative *wrapper, JSContext * cx,
 
 // static
 nsIClassInfo *
-NS_GetDOMClassInfoInstance(nsDOMClassInfoID aID)
+nsDOMClassInfo::GetClassInfoInstance(nsDOMClassInfoID aID)
 {
   if (aID >= eDOMClassInfoIDCount) {
     NS_ERROR("Bad ID!");
@@ -3728,8 +3714,8 @@ NS_GetDOMClassInfoInstance(nsDOMClassInfoID aID)
     return nsnull;
   }
 
-  if (!nsDOMClassInfo::sIsInitialized) {
-    nsresult rv = nsDOMClassInfo::Init();
+  if (!sIsInitialized) {
+    nsresult rv = Init();
 
     NS_ENSURE_SUCCESS(rv, nsnull);
   }
@@ -3847,8 +3833,6 @@ nsDOMClassInfo::ShutDown()
   sOnmousemove_id     = JSVAL_VOID;
   sOnfocus_id         = JSVAL_VOID;
   sOnblur_id          = JSVAL_VOID;
-  sOnoffline_id       = JSVAL_VOID;
-  sOnonline_id        = JSVAL_VOID;
   sOnsubmit_id        = JSVAL_VOID;
   sOnreset_id         = JSVAL_VOID;
   sOnchange_id        = JSVAL_VOID;
@@ -4957,12 +4941,10 @@ nsDOMConstructor::HasInstance(nsIXPConnectWrappedNative *wrapper,
     return NS_OK;
   }
 
-  if (name_struct->mType != nsGlobalNameStruct::eTypeClassConstructor &&
-      name_struct->mType != nsGlobalNameStruct::eTypeExternalClassInfo &&
-      name_struct->mType != nsGlobalNameStruct::eTypeExternalConstructorAlias) {
-    // Doesn't have DOM interfaces.
-    return NS_OK;
-  }
+  NS_ASSERTION(name_struct->mType == nsGlobalNameStruct::eTypeClassConstructor ||
+               name_struct->mType == nsGlobalNameStruct::eTypeExternalClassInfo ||
+               name_struct->mType == nsGlobalNameStruct::eTypeExternalConstructorAlias,
+               "The constructor was set up with a struct of the wrong type.");
 
   if (!mClassName) {
     NS_ERROR("nsDOMConstructor::HasInstance can't get name.");
@@ -5324,7 +5306,7 @@ nsWindowSH::GlobalResolve(nsGlobalWindow *aWin, JSContext *cx,
 
       nsDOMClassInfoID ci_id = (nsDOMClassInfoID)id;
 
-      nsCOMPtr<nsIClassInfo> ci(NS_GetDOMClassInfoInstance(ci_id));
+      nsCOMPtr<nsIClassInfo> ci(GetClassInfoInstance(ci_id));
       NS_ENSURE_TRUE(ci, NS_ERROR_UNEXPECTED);
 
       nsCOMPtr<nsIXPConnectJSObjectHolder> proto_holder;
@@ -6067,7 +6049,7 @@ nsWindowSH::Finalize(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
 
   sgo->OnFinalize(nsIProgrammingLanguage::JAVASCRIPT, obj);
 
-  return NS_OK;
+  return nsEventReceiverSH::Finalize(wrapper, cx, obj);
 }
 
 NS_IMETHODIMP
@@ -6509,9 +6491,6 @@ nsEventReceiverSH::ReallyIsEventName(jsval id, jschar aFirstChar)
     return (id == sOnkeydown_id      ||
             id == sOnkeypress_id     ||
             id == sOnkeyup_id);
-  case 'o' :
-    return (id == sOnoffline_id      ||
-            id == sOnonline_id);
   case 'u' :
     return id == sOnunload_id;
   case 'm' :
@@ -8028,13 +8007,8 @@ nsHTMLDocumentSH::DocumentAllTagsNewResolve(JSContext *cx, JSObject *obj,
 
     JSString *str = JSVAL_TO_STRING(id);
 
-    JSObject *proto = ::JS_GetPrototype(cx, obj);
-    if (NS_UNLIKELY(!proto)) {
-      return JS_TRUE;
-    }
-
     JSBool found;
-    if (!::JS_HasUCProperty(cx, proto,
+    if (!::JS_HasUCProperty(cx, ::JS_GetPrototype(cx, obj),
                             ::JS_GetStringChars(str),
                             ::JS_GetStringLength(str), &found)) {
       return JS_FALSE;
@@ -8849,9 +8823,6 @@ nsHTMLExternalObjSH::GetProperty(nsIXPConnectWrappedNative *wrapper,
   JSAutoRequest ar(cx);
 
   JSObject *pi_obj = ::JS_GetPrototype(cx, obj);
-  if (NS_UNLIKELY(!pi_obj)) {
-    return NS_OK;
-  }
 
   const jschar *id_chars = nsnull;
   size_t id_length = 0;
@@ -8896,9 +8867,6 @@ nsHTMLExternalObjSH::SetProperty(nsIXPConnectWrappedNative *wrapper,
   JSAutoRequest ar(cx);
 
   JSObject *pi_obj = ::JS_GetPrototype(cx, obj);
-  if (NS_UNLIKELY(!pi_obj)) {
-    return NS_OK;
-  }
 
   const jschar *id_chars = nsnull;
   size_t id_length = 0;

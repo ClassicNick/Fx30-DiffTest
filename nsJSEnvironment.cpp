@@ -38,6 +38,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsJSEnvironment.h"
+#include "nsIScriptContextOwner.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIDOMChromeWindow.h"
@@ -286,9 +287,9 @@ NS_ScriptErrorReporter(JSContext *cx,
   ::JS_ClearPendingException(cx);
 
   if (context) {
-    nsIScriptGlobalObject *globalObject = context->GetGlobalObject();
+    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(context->GetGlobalObject()));
 
-    if (globalObject) {
+    if (win) {
       nsAutoString fileName, msg;
 
       if (report) {
@@ -313,37 +314,31 @@ NS_ScriptErrorReporter(JSContext *cx,
        * then we'd need to generate a new OOM event for that
        * new OOM instance -- this isn't pretty.
        */
-      {
-        // Scope to make sure we're not using |win| in the rest of
-        // this function when we should be using |globalObject|.  We
-        // only need |win| for the event dispatch.
-        nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(globalObject));
-        nsIDocShell *docShell = win ? win->GetDocShell() : nsnull;
-        if (docShell &&
-            (!report ||
-             (report->errorNumber != JSMSG_OUT_OF_MEMORY &&
-              !JSREPORT_IS_WARNING(report->flags)))) {
-          static PRInt32 errorDepth; // Recursion prevention
-          ++errorDepth;
+      nsIDocShell *docShell = win->GetDocShell();
+      if (docShell &&
+          (!report ||
+           (report->errorNumber != JSMSG_OUT_OF_MEMORY &&
+            !JSREPORT_IS_WARNING(report->flags)))) {
+        static PRInt32 errorDepth; // Recursion prevention
+        ++errorDepth;
 
-          nsCOMPtr<nsPresContext> presContext;
-          docShell->GetPresContext(getter_AddRefs(presContext));
+        nsCOMPtr<nsPresContext> presContext;
+        docShell->GetPresContext(getter_AddRefs(presContext));
 
-          if (presContext && errorDepth < 2) {
-            nsScriptErrorEvent errorevent(PR_TRUE, NS_LOAD_ERROR);
+        if (presContext && errorDepth < 2) {
+          nsScriptErrorEvent errorevent(PR_TRUE, NS_LOAD_ERROR);
 
-            errorevent.fileName = fileName.get();
-            errorevent.errorMsg = msg.get();
-            errorevent.lineNr = report ? report->lineno : 0;
+          errorevent.fileName = fileName.get();
+          errorevent.errorMsg = msg.get();
+          errorevent.lineNr = report ? report->lineno : 0;
 
-            // Dispatch() must be synchronous for the recursion block
-            // (errorDepth) to work.
-            nsEventDispatcher::Dispatch(win, presContext, &errorevent, nsnull,
-                                        &status);
-          }
-
-          --errorDepth;
+          // Dispatch() must be synchronous for the recursion block
+          // (errorDepth) to work.
+          nsEventDispatcher::Dispatch(win, presContext, &errorevent, nsnull,
+                                      &status);
         }
+
+        --errorDepth;
       }
 
       if (status != nsEventStatus_eConsumeNoDefault) {
@@ -357,7 +352,7 @@ NS_ScriptErrorReporter(JSContext *cx,
 
           // Set category to chrome or content
           nsCOMPtr<nsIScriptObjectPrincipal> scriptPrincipal =
-            do_QueryInterface(globalObject);
+            do_QueryInterface(win);
           NS_ASSERTION(scriptPrincipal, "Global objects must implement "
                        "nsIScriptObjectPrincipal");
           nsCOMPtr<nsIPrincipal> systemPrincipal;
@@ -760,7 +755,7 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
   nsresult rv;
 
   // Check if we should offer the option to debug
-  PRBool debugPossible = (cx->runtime && cx->runtime->debuggerHandler);
+  PRBool debugPossible = (cx->debugHooks->debuggerHandler != nsnull);
 #ifdef MOZ_JSDEBUGGER
   // Get the debugger service if necessary.
   if (debugPossible) {
@@ -860,8 +855,9 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
   else if ((buttonPressed == 2) && debugPossible) {
     // Debug the script
     jsval rval;
-    switch(cx->runtime->debuggerHandler(cx, script, cx->fp->pc, &rval, 
-                                        cx->runtime->debuggerHandlerData)) {
+    switch(cx->debugHooks->debuggerHandler(cx, script, cx->fp->pc, &rval,
+                                           cx->debugHooks->
+                                           debuggerHandlerData)) {
       case JSTRAP_RETURN:
         cx->fp->rval = rval;
         return JS_TRUE;
@@ -961,6 +957,7 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
   }
   mIsInitialized = PR_FALSE;
   mNumEvaluations = 0;
+  mOwner = nsnull;
   mTerminations = nsnull;
   mScriptsEnabled = PR_TRUE;
   mBranchCallbackCount = 0;
@@ -1018,25 +1015,16 @@ nsJSContext::~nsJSContext()
 }
 
 // QueryInterface implementation for nsJSContext
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsJSContext)
-// XXX Should we call ClearScope here?
-NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsJSContext)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsJSContext)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mGlobalWrapperRef)
-  cb.NoteScriptChild(JAVASCRIPT, ::JS_GetGlobalObject(tmp->mContext));
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
 NS_INTERFACE_MAP_BEGIN(nsJSContext)
   NS_INTERFACE_MAP_ENTRY(nsIScriptContext)
   NS_INTERFACE_MAP_ENTRY(nsIXPCScriptNotify)
   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIScriptContext)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsJSContext)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsJSContext, nsIScriptContext)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsJSContext, nsIScriptContext)
+NS_IMPL_ADDREF(nsJSContext)
+NS_IMPL_RELEASE(nsJSContext)
 
 nsresult
 nsJSContext::EvaluateStringWithValue(const nsAString& aScript,
@@ -3074,6 +3062,20 @@ nsJSContext::ScriptEvaluated(PRBool aTerminated)
   mBranchCallbackTime = LL_ZERO;
 }
 
+void
+nsJSContext::SetOwner(nsIScriptContextOwner* owner)
+{
+  // The owner should not be addrefed!! We'll be told
+  // when the owner goes away.
+  mOwner = owner;
+}
+
+nsIScriptContextOwner *
+nsJSContext::GetOwner()
+{
+  return mOwner;
+}
+
 nsresult
 nsJSContext::SetTerminationFunction(nsScriptTerminationFunc aFunc,
                                     nsISupports* aRef)
@@ -3565,17 +3567,13 @@ public:
   nsJSArgArray(JSContext *aContext, PRUint32 argc, jsval *argv, nsresult *prv);
   ~nsJSArgArray();
   // nsISupports
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsJSArgArray, nsIJSArgArray)
+  NS_DECL_ISUPPORTS
 
   // nsIArray
   NS_DECL_NSIARRAY
 
   // nsIJSArgArray
   nsresult GetArgs(PRUint32 *argc, void **argv);
-
-  void ReleaseJSObjects();
-
 protected:
   JSContext *mContext;
   jsval *mArgv;
@@ -3608,12 +3606,6 @@ nsJSArgArray::nsJSArgArray(JSContext *aContext, PRUint32 argc, jsval *argv,
 
 nsJSArgArray::~nsJSArgArray()
 {
-  ReleaseJSObjects();
-}
-
-void
-nsJSArgArray::ReleaseJSObjects()
-{
   if (mArgv) {
     NS_ASSERTION(nsJSRuntime::sRuntime, "Where's the runtime gone?");
     if (nsJSRuntime::sRuntime) {
@@ -3623,36 +3615,17 @@ nsJSArgArray::ReleaseJSObjects()
     }
     PR_DELETE(mArgv);
   }
-  mArgc = 0;
 }
 
 // QueryInterface implementation for nsJSArgArray
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsJSArgArray)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsJSArgArray)
-  tmp->ReleaseJSObjects();
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsJSArgArray)
-  {
-    jsval *argv = tmp->mArgv;
-    if (argv) {
-      jsval *end;
-      for (end = argv + tmp->mArgc; argv < end; ++argv) {
-        if (JSVAL_IS_OBJECT(*argv))
-          cb.NoteScriptChild(JAVASCRIPT, JSVAL_TO_OBJECT(*argv));
-      }
-    }
-  }
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
 NS_INTERFACE_MAP_BEGIN(nsJSArgArray)
   NS_INTERFACE_MAP_ENTRY(nsIArray)
   NS_INTERFACE_MAP_ENTRY(nsIJSArgArray)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIJSArgArray)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsJSArgArray)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsJSArgArray, nsIJSArgArray)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsJSArgArray, nsIJSArgArray)
+NS_IMPL_ADDREF(nsJSArgArray)
+NS_IMPL_RELEASE(nsJSArgArray)
 
 nsresult
 nsJSArgArray::GetArgs(PRUint32 *argc, void **argv)

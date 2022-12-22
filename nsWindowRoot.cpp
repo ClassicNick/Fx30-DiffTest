@@ -80,17 +80,18 @@ nsWindowRoot::~nsWindowRoot()
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_2(nsWindowRoot, mListenerManager, mFocusController)
+NS_IMPL_CYCLE_COLLECTION_2_AMBIGUOUS(nsWindowRoot, nsIDOMEventReceiver, 
+                                     mListenerManager, mFocusController)
 
 NS_INTERFACE_MAP_BEGIN(nsWindowRoot)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventReceiver)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventReceiver)
-  NS_INTERFACE_MAP_ENTRY(nsPIDOMEventTarget)
+  NS_INTERFACE_MAP_ENTRY(nsIChromeEventHandler)
   NS_INTERFACE_MAP_ENTRY(nsPIWindowRoot)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSEventTarget)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsWindowRoot)
+  NS_INTERFACE_MAP_ENTRY_CYCLE_COLLECTION(nsWindowRoot)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsWindowRoot, nsIDOMEventReceiver)
@@ -113,20 +114,9 @@ nsWindowRoot::DispatchEvent(nsIDOMEvent* aEvt, PRBool *_retval)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv =  nsEventDispatcher::DispatchDOMEvent(
-    NS_STATIC_CAST(nsPIDOMEventTarget*, this), nsnull, aEvt, nsnull, &status);
+    NS_STATIC_CAST(nsIChromeEventHandler*, this), nsnull, aEvt, nsnull, &status);
   *_retval = (status != nsEventStatus_eConsumeNoDefault);
   return rv;
-}
-
-nsresult
-nsWindowRoot::DispatchDOMEvent(nsEvent* aEvent,
-                               nsIDOMEvent* aDOMEvent,
-                               nsPresContext* aPresContext,
-                               nsEventStatus* aEventStatus)
-{
-  return nsEventDispatcher::DispatchDOMEvent(NS_STATIC_CAST(nsPIDOMEventTarget*, this),
-                                             aEvent, aDOMEvent,
-                                             aPresContext, aEventStatus);
 }
 
 NS_IMETHODIMP
@@ -249,8 +239,8 @@ nsWindowRoot::GetSystemEventGroup(nsIDOMEventGroup **aGroup)
 }
 
 
-nsresult
-nsWindowRoot::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+NS_IMETHODIMP
+nsWindowRoot::PreHandleChromeEvent(nsEventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = PR_TRUE;
   aVisitor.mForceContentDispatch = PR_TRUE; //FIXME! Bug 329119
@@ -259,8 +249,8 @@ nsWindowRoot::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
   return NS_OK;
 }
 
-nsresult
-nsWindowRoot::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
+NS_IMETHODIMP
+nsWindowRoot::PostHandleChromeEvent(nsEventChainPostVisitor& aVisitor)
 {
   return NS_OK;
 }
@@ -290,7 +280,7 @@ nsWindowRoot::SetScriptTypeID(PRUint32 aScriptType)
 ///////////////////////////////////////////////////////////////////////////////////
 
 nsresult
-NS_NewWindowRoot(nsIDOMWindow* aWindow, nsPIDOMEventTarget** aResult)
+NS_NewWindowRoot(nsIDOMWindow* aWindow, nsIChromeEventHandler** aResult)
 {
   *aResult = new nsWindowRoot(aWindow);
   if (!*aResult)

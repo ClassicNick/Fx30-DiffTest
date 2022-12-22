@@ -28,7 +28,6 @@
  *   Vidur Apparao <vidur@netscape.com>
  *   Johnny Stenback <jst@netscape.com>
  *   Mark Hammond <mhammond@skippinet.com.au>
- *   Ryan Jones <sciguyryan@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -74,7 +73,6 @@
 #endif
 #include "nsContentCID.h"
 #include "nsLayoutStatics.h"
-#include "nsCycleCollector.h"
 
 // Interfaces Needed
 #include "nsIWidget.h"
@@ -120,8 +118,6 @@
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIScrollableView.h"
-#include "nsIView.h"
-#include "nsIViewManager.h"
 #include "nsISelectionController.h"
 #include "nsISelection.h"
 #include "nsIPrompt.h"
@@ -173,7 +169,7 @@
 #include "nsIDOMXULDocument.h"
 #include "nsIDOMXULCommandDispatcher.h"
 
-#include "nsBindingManager.h"
+#include "nsIBindingManager.h"
 #include "nsIXBLService.h"
 
 // used for popup blocking, needs to be converted to something
@@ -323,29 +319,6 @@ IsAboutBlank(nsIURI* aURI)
   nsCAutoString str;
   aURI->GetSpec(str);
   return str.EqualsLiteral("about:blank");  
-}
-
-static void
-StripNullChars(const nsAString& aInStr,
-               nsAString& aOutStr)
-{
-  // In common cases where we don't have nulls in the
-  // string we can simple simply bypass the checking code.
-  PRInt32 firstNullPos = aInStr.FindChar('\0');
-  if (firstNullPos == kNotFound) {
-    aOutStr.Assign(aInStr);
-    return;
-  }
-  
-  nsAString::const_iterator start, end;
-  aInStr.BeginReading(start); 
-  aInStr.EndReading(end); 
-
-  while (start != end) {
-    if (*start != '\0')
-      aOutStr.Append(*start);
-    ++start;
-  }
 }
 
 /**
@@ -553,10 +526,6 @@ nsGlobalWindow::~nsGlobalWindow()
 
   CleanUp();
 
-#ifdef DEBUG
-  nsCycleCollector_DEBUG_wasFreed(NS_STATIC_CAST(nsIScriptGlobalObject*, this));
-#endif
-
   delete mPendingStorageEvents;
 
   nsLayoutStatics::Release();
@@ -588,6 +557,7 @@ nsGlobalWindow::CleanUp()
 
   mOpener = nsnull;             // Forces Release
   if (mContext) {
+    mContext->SetOwner(nsnull);
     mContext = nsnull;            // Forces Release
   }
   mChromeEventHandler = nsnull; // Forces Release
@@ -609,10 +579,6 @@ nsGlobalWindow::CleanUp()
   }
   mArguments = nsnull;
   mArgumentsLast = nsnull;
-
-#ifdef DEBUG
-  nsCycleCollector_DEBUG_shouldBeFreed(NS_STATIC_CAST(nsIScriptGlobalObject*, this));
-#endif
 }
 
 void
@@ -656,11 +622,6 @@ nsGlobalWindow::FreeInnerObjects(PRBool aClearScope)
     mDocumentPrincipal = mDoc->NodePrincipal();
   }
 
-#ifdef DEBUG
-  if (mDocument)
-    nsCycleCollector_DEBUG_shouldBeFreed(nsCOMPtr<nsISupports>(do_QueryInterface(mDocument)));
-#endif
-
   // Remove our reference to the document and the document principal.
   mDocument = nsnull;
   mDoc = nsnull;
@@ -675,10 +636,6 @@ nsGlobalWindow::FreeInnerObjects(PRBool aClearScope)
         scx->ClearScope(mScriptGlobals[NS_STID_INDEX(lang_id)], PR_TRUE);
     }
   }
-
-#ifdef DEBUG
-  nsCycleCollector_DEBUG_shouldBeFreed(NS_STATIC_CAST(nsIScriptGlobalObject*, this));
-#endif
 }
 
 //*****************************************************************************
@@ -698,7 +655,6 @@ NS_INTERFACE_MAP_BEGIN(nsGlobalWindow)
   NS_INTERFACE_MAP_ENTRY(nsIScriptGlobalObject)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventReceiver)
-  NS_INTERFACE_MAP_ENTRY(nsPIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSEventTarget)
@@ -708,20 +664,24 @@ NS_INTERFACE_MAP_BEGIN(nsGlobalWindow)
   NS_INTERFACE_MAP_ENTRY(nsIDOMStorageWindow)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsGlobalWindow)
+  NS_INTERFACE_MAP_ENTRY_CYCLE_COLLECTION(nsGlobalWindow)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Window)
 NS_INTERFACE_MAP_END
 
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsGlobalWindow, nsIScriptGlobalObject)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsGlobalWindow,
-                                           nsIScriptGlobalObject)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsGlobalWindow, nsIScriptGlobalObject)
 
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGlobalWindow)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGlobalWindow, nsIScriptGlobalObject)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mContext)
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOpener)
+  // Strange bug: If you uncomment this line you will find that
+  // the cycle collector crashes when working with multiple open
+  // top-level windows. It is as though the windows somehow
+  // race with one another. How can this be? Curious.
+  //
+  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mOpener)
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mControllers)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mArguments)
@@ -746,17 +706,31 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGlobalWindow)
 
   // Traverse any associated preserved wrappers.
   {
+    nsISupports *preservedWrapper = nsnull;
     if (tmp->mDoc) {
-      cb.NoteXPCOMChild(tmp->mDoc->GetReference(tmp));
+      preservedWrapper = tmp->mDoc->GetReference(tmp);
+      if (preservedWrapper)
+        cb.NoteXPCOMChild(preservedWrapper);
     }
   }
 
+  // Traverse our possibly-inner window.
+  if (tmp->IsOuterWindow()
+      && tmp->GetCurrentInnerWindowInternal()) {    
+    cb.NoteXPCOMChild(NS_STATIC_CAST(nsIScriptGlobalObject*, 
+                                     tmp->GetCurrentInnerWindowInternal()));
+  }
+
+  // FIXME: somewhere in these commented lines lies a bug that causes
+  // a segfault. So we have disabled them, even though it seems wrong
+  // to do so. Other matters are more pressing at the moment.
+
   // Traverse stuff from nsPIDOMWindow
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChromeEventHandler)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocument)
+  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChromeEventHandler)
+  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocument)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindow)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindow, nsIScriptGlobalObject)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mContext)
 
   // See comment about traversing mOpener above.
@@ -781,12 +755,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindow)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mListenerManager)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mSessionStorage)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDocumentPrincipal)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDoc)
 
   // Unlink any associated preserved wrapper.
-  if (tmp->mDoc) {
+  if (tmp->mDoc)
     tmp->mDoc->RemoveReference(tmp->mDoc.get());
-    NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDoc)
-  }
 
   // Unlink stuff from nsPIDOMWindow
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChromeEventHandler)
@@ -820,9 +793,12 @@ nsGlobalWindow::SetScriptContext(PRUint32 lang_id, nsIScriptContext *aScriptCont
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  NS_ASSERTION(!aScriptContext || !mScriptContexts[lang_ndx],
-               "Bad call to SetContext()!");
+  nsIScriptContext *existing;
+  existing = mScriptContexts[lang_ndx];
+  NS_ASSERTION(!aScriptContext || !existing, "Bad call to SetContext()!");
 
+  if (existing)
+    existing->SetOwner(nsnull);
   void *script_glob = nsnull;
 
   if (aScriptContext) {
@@ -1779,6 +1755,7 @@ nsGlobalWindow::SetDocShell(nsIDocShell* aDocShell)
       langCtx = mScriptContexts[st_ndx];
       if (langCtx) {
         langCtx->GC();
+        langCtx->SetOwner(nsnull);
         langCtx->FinalizeContext();
         mScriptContexts[st_ndx] = nsnull;
       }
@@ -1809,9 +1786,7 @@ nsGlobalWindow::SetDocShell(nsIDocShell* aDocShell)
 
     // Get our enclosing chrome shell and retrieve its global window impl, so
     // that we can do some forwarding to the chrome document.
-    nsCOMPtr<nsIDOMEventTarget> chromeEventHandler;
-    mDocShell->GetChromeEventHandler(getter_AddRefs(chromeEventHandler));
-    mChromeEventHandler = do_QueryInterface(chromeEventHandler);
+    mDocShell->GetChromeEventHandler(getter_AddRefs(mChromeEventHandler));
     if (!mChromeEventHandler) {
       // We have no chrome event handler. If we have a parent,
       // get our chrome event handler from the parent. If
@@ -1896,7 +1871,11 @@ nsGlobalWindow::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
     mIsHandlingResizeEvent = PR_TRUE;
   }
 
-  aVisitor.mParentTarget = mChromeEventHandler;
+  // Check chrome document capture here.
+  if (mChromeEventHandler) {
+    aVisitor.mParentTarget = mChromeEventHandler;
+    aVisitor.mParentIsChromeHandler = PR_TRUE;
+  }
   return NS_OK;
 }
 
@@ -1907,7 +1886,7 @@ nsGlobalWindow::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
   /* mChromeEventHandler and mContext go dangling in the middle of this
    function under some circumstances (events that destroy the window)
    without this addref. */
-  nsCOMPtr<nsPIDOMEventTarget> kungFuDeathGrip1(mChromeEventHandler);
+  nsCOMPtr<nsIChromeEventHandler> kungFuDeathGrip1(mChromeEventHandler);
   nsCOMPtr<nsIScriptContext> kungFuDeathGrip2(GetContextInternal());
   nsGlobalWindow* outer = GetOuterWindowInternal();
 
@@ -3141,7 +3120,7 @@ nsGlobalWindow::GetScrollXY(PRInt32* aScrollX, PRInt32* aScrollY,
 
   nsresult rv;
   nsIScrollableView *view = nsnull;      // no addref/release for views
-  float t2p, p2t;
+  float p2t, t2p;
 
   if (aDoFlush) {
     FlushPendingNotifications(Flush_Layout);
@@ -3529,12 +3508,7 @@ nsGlobalWindow::Alert(const nsAString& aString)
   nsAutoString title;
   MakeScriptDialogTitle(title);
 
-  // Remove non-terminating null characters from the 
-  // string. See bug #310037. 
-  nsAutoString final;
-  StripNullChars(*str, final);
-
-  return prompter->Alert(title.get(), final.get());
+  return prompter->Alert(title.get(), PromiseFlatString(*str).get());
 }
 
 NS_IMETHODIMP
@@ -3559,13 +3533,8 @@ nsGlobalWindow::Confirm(const nsAString& aString, PRBool* aReturn)
   nsAutoString title;
   MakeScriptDialogTitle(title);
 
-  // Remove non-terminating null characters from the 
-  // string. See bug #310037. 
-  nsAutoString final;
-  StripNullChars(aString, final);
-
-  return prompter->Confirm(title.get(), final.get(),
-                           aReturn);
+  return prompter->Confirm(title.get(),
+                           PromiseFlatString(aString).get(), aReturn);
 }
 
 NS_IMETHODIMP
@@ -3600,15 +3569,9 @@ nsGlobalWindow::Prompt(const nsAString& aMessage, const nsAString& aInitial,
 
   nsAutoString title;
   MakeScriptDialogTitle(title);
-  
-  // Remove non-terminating null characters from the 
-  // string. See bug #310037. 
-  nsAutoString fixedMessage, fixedInitial;
-  StripNullChars(aMessage, fixedMessage);
-  StripNullChars(aInitial, fixedInitial);
 
-  rv = prompter->Prompt(title.get(), fixedMessage.get(), nsnull,
-                        aSavePassword, fixedInitial.get(),
+  rv = prompter->Prompt(title.get(), PromiseFlatString(aMessage).get(), nsnull,
+                        aSavePassword, PromiseFlatString(aInitial).get(),
                         getter_Copies(uniResult), &b);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -3830,25 +3793,6 @@ nsGlobalWindow::Home()
 #endif
     CopyASCIItoUTF16(DEFAULT_HOME_PAGE, homeURL);
   }
-
-#ifdef MOZ_PHOENIX
-  {
-    // Firefox lets the user specify multiple home pages to open in
-    // individual tabs by separating them with '|'. Since we don't
-    // have the machinery in place to easily open new tabs from here,
-    // simply truncate the homeURL at the first '|' character to
-    // prevent any possibilities of leaking the users list of home
-    // pages to the first home page.
-    //
-    // Once bug https://bugzilla.mozilla.org/show_bug.cgi?id=221445 is
-    // fixed we can revisit this.
-    PRInt32 firstPipe = homeURL.FindChar('|');
-
-    if (firstPipe > 0) {
-      homeURL.Truncate(firstPipe);
-    }
-  }
-#endif
 
   nsresult rv;
   nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
@@ -4090,7 +4034,7 @@ nsGlobalWindow::GetWindowRoot(nsIDOMEventTarget **aWindowRoot)
     return NS_OK;
   }
 
-  nsPIDOMEventTarget *chromeHandler = piWin->GetChromeEventHandler();
+  nsIChromeEventHandler *chromeHandler = piWin->GetChromeEventHandler();
   if (!chromeHandler) {
     return NS_OK;
   }
@@ -5316,7 +5260,7 @@ nsGlobalWindow::Atob(const nsAString& aAsciiBase64String,
     return NS_ERROR_DOM_INVALID_CHARACTER_ERR;
   }
 
-  PRUint32 dataLen = aAsciiBase64String.Length();
+  PRInt32 dataLen = aAsciiBase64String.Length();
 
   NS_LossyConvertUTF16toASCII base64(aAsciiBase64String);
   if (base64.Length() != dataLen) {
@@ -5645,7 +5589,7 @@ nsGlobalWindow::GetPrivateRoot()
   // Get the chrome event handler from the doc shell, since we only
   // want to deal with XUL chrome handlers and not the new kind of
   // window root handler.
-  nsCOMPtr<nsIDOMEventTarget> chromeEventHandler;
+  nsCOMPtr<nsIChromeEventHandler> chromeEventHandler;
   docShell->GetChromeEventHandler(getter_AddRefs(chromeEventHandler));
 
   nsCOMPtr<nsIContent> chromeElement(do_QueryInterface(mChromeEventHandler));
@@ -5743,16 +5687,18 @@ nsGlobalWindow::Deactivate()
 nsIFocusController*
 nsGlobalWindow::GetRootFocusController()
 {
-  nsIDOMWindowInternal* rootWindow = nsGlobalWindow::GetPrivateRoot();
+  nsIDOMWindowInternal *rootWindow = nsGlobalWindow::GetPrivateRoot();
   nsCOMPtr<nsIFocusController> fc;
 
-  nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(rootWindow));
-  if (piWin) {
+  if (rootWindow) {
     // Obtain the chrome event handler.
-    nsPIDOMEventTarget* chromeHandler = piWin->GetChromeEventHandler();
-    nsCOMPtr<nsPIWindowRoot> windowRoot(do_QueryInterface(chromeHandler));
-    if (windowRoot) {
-      windowRoot->GetFocusController(getter_AddRefs(fc));
+    nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(rootWindow));
+    nsIChromeEventHandler *chromeHandler = piWin->GetChromeEventHandler();
+    if (chromeHandler) {
+      nsCOMPtr<nsPIWindowRoot> windowRoot(do_QueryInterface(chromeHandler));
+      if (windowRoot) {
+        windowRoot->GetFocusController(getter_AddRefs(fc));
+      }
     }
   }
 
@@ -5969,8 +5915,9 @@ nsGlobalWindow::GetInterface(const nsIID & aIID, void **aSink)
 void
 nsGlobalWindow::FireOfflineStatusEvent()
 {
-  if (!mDoc)
+  if (!mDocument)
     return;
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(mDocument));
   nsAutoString name;
   if (NS_IsOffline()) {
     name.AssignLiteral("offline");
@@ -5979,8 +5926,8 @@ nsGlobalWindow::FireOfflineStatusEvent()
   }
   // The event is fired at the body element, or if there is no body element,
   // at the document.
-  nsCOMPtr<nsISupports> eventTarget = mDoc.get();
-  nsCOMPtr<nsIDOMHTMLDocument> htmlDoc = do_QueryInterface(mDoc);
+  nsCOMPtr<nsISupports> eventTarget = doc.get();
+  nsCOMPtr<nsIDOMHTMLDocument> htmlDoc = do_QueryInterface(doc);
   if (htmlDoc) {
     nsCOMPtr<nsIDOMHTMLElement> body;
     htmlDoc->GetBody(getter_AddRefs(body));
@@ -5988,14 +5935,7 @@ nsGlobalWindow::FireOfflineStatusEvent()
       eventTarget = body;
     }
   }
-  else {
-    nsCOMPtr<nsIDOMElement> documentElement;
-    mDocument->GetDocumentElement(getter_AddRefs(documentElement));
-    if(documentElement) {        
-      eventTarget = documentElement;
-    }
-  }
-  nsContentUtils::DispatchTrustedEvent(mDoc, eventTarget, name, PR_TRUE, PR_FALSE);
+  nsContentUtils::DispatchTrustedEvent(doc, eventTarget, name, PR_TRUE, PR_FALSE);
 }
 
 nsresult
@@ -7207,7 +7147,7 @@ nsGlobalWindow::GetScrollInfo(nsIScrollableView **aScrollableView, float *aP2T,
   nsCOMPtr<nsPresContext> presContext;
   mDocShell->GetPresContext(getter_AddRefs(presContext));
   if (presContext) {
-	*aP2T = presContext->PixelsToTwips();
+    *aP2T = presContext->PixelsToTwips();
     *aT2P = presContext->TwipsToPixels();
 
     nsIViewManager* vm = presContext->GetViewManager();
@@ -7584,17 +7524,10 @@ nsGlobalWindow::SetScriptTypeID(PRUint32 aScriptType)
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsGlobalChromeWindow)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsGlobalChromeWindow,
-                                                  nsGlobalWindow)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBrowserDOMWindow)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
 // QueryInterface implementation for nsGlobalChromeWindow
 NS_INTERFACE_MAP_BEGIN(nsGlobalChromeWindow)
   NS_INTERFACE_MAP_ENTRY(nsIDOMChromeWindow)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(ChromeWindow)
-  NS_INTERFACE_MAP_ENTRY_CYCLE_COLLECTION(nsGlobalChromeWindow)
 NS_INTERFACE_MAP_END_INHERITING(nsGlobalWindow)
 
 NS_IMPL_ADDREF_INHERITED(nsGlobalChromeWindow, nsGlobalWindow)

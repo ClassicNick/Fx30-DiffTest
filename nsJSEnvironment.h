@@ -45,7 +45,6 @@
 #include "nsIXPCScriptNotify.h"
 #include "nsITimer.h"
 #include "prtime.h"
-#include "nsCycleCollectionParticipant.h"
 
 class nsIXPConnectJSObjectHolder;
 
@@ -57,8 +56,7 @@ public:
   nsJSContext(JSRuntime *aRuntime);
   virtual ~nsJSContext();
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsJSContext, nsIScriptContext)
+  NS_DECL_ISUPPORTS
 
   virtual PRUint32 GetScriptTypeID()
     { return nsIProgrammingLanguage::JAVASCRIPT; }
@@ -137,6 +135,8 @@ public:
   virtual void GC();
 
   virtual void ScriptEvaluated(PRBool aTerminated);
+  virtual void SetOwner(nsIScriptContextOwner* owner);
+  virtual nsIScriptContextOwner *GetOwner();
   virtual nsresult SetTerminationFunction(nsScriptTerminationFunc aFunc,
                                           nsISupports* aRef);
   virtual PRBool GetScriptsEnabled();
@@ -194,6 +194,8 @@ protected:
 private:
   JSContext *mContext;
   PRUint32 mNumEvaluations;
+
+  nsIScriptContextOwner* mOwner;  /* NB: weak reference, not ADDREF'd */
 
 protected:
   struct TerminationFuncHolder;

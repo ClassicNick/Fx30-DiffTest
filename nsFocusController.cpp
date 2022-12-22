@@ -85,28 +85,8 @@ nsFocusController::~nsFocusController(void)
 {
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsFocusController)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsFocusController, nsIFocusController)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsFocusController,
-                                           nsIFocusController)
-
-NS_INTERFACE_MAP_BEGIN(nsFocusController)
-  NS_INTERFACE_MAP_ENTRY(nsIFocusController)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMFocusListener)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
-  NS_INTERFACE_MAP_ENTRY(nsSupportsWeakReference)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIFocusController)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsFocusController)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsFocusController)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFocusController)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentWindow)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPopupNode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPopupEvent)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+NS_IMPL_ISUPPORTS4(nsFocusController, nsIFocusController, nsIDOMFocusListener,
+                   nsIDOMEventListener, nsSupportsWeakReference)
 
 NS_IMETHODIMP
 nsFocusController::Create(nsIFocusController** aResult)
@@ -143,6 +123,11 @@ nsFocusController::GetFocusedWindow(nsIDOMWindowInternal** aWindow)
 NS_IMETHODIMP
 nsFocusController::SetFocusedElement(nsIDOMElement* aElement)
 {
+  if (mCurrentElement) 
+    mPreviousElement = mCurrentElement;
+  else if (aElement) 
+    mPreviousElement = aElement;
+
   mNeedUpdateCommands = mNeedUpdateCommands || mCurrentElement != aElement;
   mCurrentElement = aElement;
 
@@ -152,6 +137,15 @@ nsFocusController::SetFocusedElement(nsIDOMElement* aElement)
     // before updating.
     UpdateCommands();
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFocusController::RewindFocusState()
+{
+  mCurrentElement = mPreviousElement;
+  mCurrentWindow = mPreviousWindow;
+
   return NS_OK;
 }
 
@@ -171,6 +165,12 @@ nsFocusController::SetFocusedWindow(nsIDOMWindowInternal* aWindow)
     nsCOMPtr<nsIBaseWindow> basewin = do_QueryInterface(win->GetDocShell());
     if (basewin)
       basewin->SetFocus();
+  }
+
+  if (mCurrentWindow) {
+    mPreviousWindow = mCurrentWindow;
+  } else if (win) {
+    mPreviousWindow = win;
   }
 
   mNeedUpdateCommands = mNeedUpdateCommands || mCurrentWindow != win;
@@ -350,8 +350,10 @@ nsFocusController::Focus(nsIDOMEvent* aEvent)
           nsCOMPtr<nsIDOMDocument> windowDoc;
           mCurrentWindow->GetDocument(getter_AddRefs(windowDoc));
           if (ownerDoc != windowDoc)
-            mCurrentElement = nsnull;
+            mCurrentElement = mPreviousElement = nsnull;
         }
+        else
+          mPreviousElement = nsnull;
 
         if (!mCurrentElement) {
           UpdateCommands();
@@ -543,7 +545,7 @@ nsFocusController::SetActive(PRBool aActive)
 NS_IMETHODIMP
 nsFocusController::ResetElementFocus()
 {
-  mCurrentElement = nsnull;
+  mCurrentElement = mPreviousElement = nsnull;
   return NS_OK;
 }
 

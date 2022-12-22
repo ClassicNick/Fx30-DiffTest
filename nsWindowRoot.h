@@ -50,6 +50,7 @@ class nsEventChainPostVisitor;
 #include "nsIDOMEventReceiver.h"
 #include "nsIDOM3EventTarget.h"
 #include "nsIDOMNSEventTarget.h"
+#include "nsIChromeEventHandler.h"
 #include "nsIEventListenerManager.h"
 #include "nsPIWindowRoot.h"
 #include "nsIFocusController.h"
@@ -59,6 +60,7 @@ class nsEventChainPostVisitor;
 class nsWindowRoot : public nsIDOMEventReceiver,
                      public nsIDOM3EventTarget,
                      public nsIDOMNSEventTarget,
+                     public nsIChromeEventHandler,
                      public nsPIWindowRoot
 {
 public:
@@ -69,13 +71,7 @@ public:
   NS_DECL_NSIDOMEVENTTARGET
   NS_DECL_NSIDOM3EVENTTARGET
   NS_DECL_NSIDOMNSEVENTTARGET
-
-  virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
-  virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor);
-  virtual nsresult DispatchDOMEvent(nsEvent* aEvent,
-                                    nsIDOMEvent* aDOMEvent,
-                                    nsPresContext* aPresContext,
-                                    nsEventStatus* aEventStatus);
+  NS_DECL_NSICHROMEEVENTHANDLER
 
   // nsIDOMEventReceiver
   NS_IMETHOD AddEventListenerByIID(nsIDOMEventListener *aListener, const nsIID& aIID);
@@ -88,7 +84,7 @@ public:
   // nsPIWindowRoot
   NS_IMETHOD GetFocusController(nsIFocusController** aResult);
 
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsWindowRoot, nsIDOMEventReceiver)
+  NS_DECL_CYCLE_COLLECTION_CLASS(nsWindowRoot)
 
 protected:
   // Members
@@ -100,6 +96,6 @@ protected:
 
 extern nsresult
 NS_NewWindowRoot(nsIDOMWindow* aWindow,
-                 nsPIDOMEventTarget** aResult);
+                 nsIChromeEventHandler** aResult);
 
 #endif

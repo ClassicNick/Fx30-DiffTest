@@ -56,6 +56,7 @@
 #include "nsDOMWindowList.h"
 #include "nsIBaseWindow.h"
 #include "nsIBrowserDOMWindow.h"
+#include "nsIChromeEventHandler.h"
 #include "nsIControllers.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDocShellTreeItem.h"
@@ -94,7 +95,6 @@
 #include "nsIDOMStorage.h"
 #include "nsIDOMStorageList.h"
 #include "nsIDOMStorageWindow.h"
-#include "nsPIDOMEventTarget.h"
 
 #define DEFAULT_HOME_PAGE "www.mozilla.org"
 #define PREF_BROWSER_STARTUP_HOMEPAGE "browser.startup.homepage"
@@ -217,7 +217,6 @@ class nsGlobalWindow : public nsPIDOMWindow,
                        public nsIDOMJSWindow,
                        public nsIScriptObjectPrincipal,
                        public nsIDOMEventReceiver,
-                       public nsPIDOMEventTarget,
                        public nsIDOM3EventTarget,
                        public nsIDOMNSEventTarget,
                        public nsIDOMViewCSS,
@@ -403,8 +402,7 @@ public:
 
   friend class WindowStateHolder;
 
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsGlobalWindow,
-                                           nsIScriptGlobalObject)
+  NS_DECL_CYCLE_COLLECTION_CLASS(nsGlobalWindow)
 
 protected:
   // Object Management
@@ -713,9 +711,6 @@ public:
     : nsGlobalWindow(aOuterWindow)
   {
   }
-
-  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsGlobalChromeWindow,
-                                                     nsGlobalWindow)
 
 protected:
   nsCOMPtr<nsIBrowserDOMWindow> mBrowserDOMWindow;
