@@ -409,7 +409,6 @@ void KeyboardLayout::LoadLayout ()
       }
     }
   }
-
 #endif
 }
 
