@@ -20,6 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Boris Zbarsky <bzbarsky@mit.edu> (original author)
+ *   L. David Baron <dbaron@dbaron.org>, Mozilla Corporation
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -324,7 +326,7 @@ public:
    * for some reason the coordinates for the mouse are not known (e.g.,
    * the event is not a GUI event).
    */
-  static nsPoint GetEventCoordinatesRelativeTo(nsEvent* aEvent,
+  static nsPoint GetEventCoordinatesRelativeTo(const nsEvent* aEvent,
                                                nsIFrame* aFrame);
 
 /**
@@ -414,8 +416,8 @@ public:
                                               nsPoint aDelta,
                                               const nsRect& aCopyRect,
                                               nsRegion* aRepaintRegion);
-                                       
-  static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
+
+static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
                                          nsIDrawingSurface* surface,
                                          const nsRect& aRect,
                                          nsIRenderingContext** aResult);
@@ -448,12 +450,6 @@ public:
                           PRInt32    aCursorPos, 
                           PRInt32&   aIndex,
                           PRInt32&   aTextWidth);
-
-  /**
-   * Scroll the given form control frame into view.
-   * @param aFormFrame Frame to scroll into view.
-   */
-  static void ScrollIntoView(nsIFormControlFrame* aFormFrame);
 
   /**
    * Get the union of all rects in aFrame and its continuations, relative
@@ -506,6 +502,12 @@ public:
                                           nsIFrame* aKnownCommonAncestorHint);
 
   /**
+   * Get a frame's next-in-flow, or, if it doesn't have one, its special sibling.
+   */
+  static nsIFrame*
+  GetNextContinuationOrSpecialSibling(nsIFrame *aFrame);
+
+  /**
    * Check whether aFrame is a part of the scrollbar or scrollcorner of
    * the root content.
    * @param aFrame the checking frame
@@ -514,6 +516,19 @@ public:
    */
   static PRBool IsViewportScrollbarFrame(nsIFrame* aFrame);
 
+  /**
+   * Return the value of aStyle as an nscoord if it can be determined without
+   * reference to ancestors or children (e.g. is not a percentage width)
+   * @param aStyle the style coord
+   * @param aRenderingContext the rendering context to use for font measurement
+   * @param aFrame the frame whose style context should be used for font information
+   * @param aResult the nscoord value of the style coord
+   * @return TRUE if the unit is eStyleUnit_Coord or eStyleUnit_Chars
+   */
+  static PRBool GetAbsoluteCoord(const nsStyleCoord& aStyle,
+                                 nsIRenderingContext* aRenderingContext,
+                                 nsIFrame* aFrame,
+                                 nscoord& aResult);
   /**
    * Get the contribution of aFrame to its containing block's intrinsic
    * width.  This considers the child's intrinsic width, its 'width',
@@ -525,12 +540,45 @@ public:
                                        nsIFrame* aFrame,
                                        IntrinsicWidthType aType);
 
+  /*
+   * Convert nsStyleCoord to nscoord when percentages depend on the
+   * containing block width.
+   */
   static nscoord ComputeWidthDependentValue(
                    nsIRenderingContext* aRenderingContext,
                    nsIFrame*            aFrame,
                    nscoord              aContainingBlockWidth,
                    const nsStyleCoord&  aCoord);
 
+  /*
+   * Convert nsStyleCoord to nscoord when percentages depend on the
+   * containing block width, and enumerated values are for width,
+   * min-width, or max-width.  Returns the content-box width value based
+   * on aContentEdgeToBoxSizing and aBoxSizingToMarginEdge (which are
+   * also used for the enumerated values for width.  This function does
+   * not handle 'auto'.  It ensures that the result is nonnegative.
+   *
+   * @param aRenderingContext Rendering context for font measurement/metrics.
+   * @param aFrame Frame whose (min-/max-/)width is being computed
+   * @param aContainingBlockWidth Width of aFrame's containing block.
+   * @param aContentEdgeToBoxSizing The sum of any left/right padding and
+   *          border that goes inside the rect chosen by -moz-box-sizing.
+   * @param aBoxSizingToMarginEdge The sum of any left/right padding, border,
+   *          and margin that goes outside the rect chosen by -moz-box-sizing.
+   * @param aCoord The width value to compute.
+   */
+  static nscoord ComputeWidthValue(
+                   nsIRenderingContext* aRenderingContext,
+                   nsIFrame*            aFrame,
+                   nscoord              aContainingBlockWidth,
+                   nscoord              aContentEdgeToBoxSizing,
+                   nscoord              aBoxSizingToMarginEdge,
+                   const nsStyleCoord&  aCoord);
+
+  /*
+   * Convert nsStyleCoord to nscoord when percentages depend on the
+   * containing block height.
+   */
   static nscoord ComputeHeightDependentValue(
                    nsIRenderingContext* aRenderingContext,
                    nsIFrame*            aFrame,
@@ -540,7 +588,7 @@ public:
   static nsSize ComputeSizeWithIntrinsicDimensions(
                     nsIRenderingContext* aRenderingContext,
                     nsIFrame* aFrame, nsSize aIntrinsicSize, nsSize aCBSize,
-                    nsSize aBorder, nsSize aPadding);
+                    nsSize aMargin, nsSize aBorder, nsSize aPadding);
 
   // Implement nsIFrame::GetPrefWidth in terms of nsIFrame::AddInlinePrefWidth
   static nscoord PrefWidthFromInline(nsIFrame* aFrame,
@@ -580,6 +628,46 @@ public:
    * Otherwise returns false.
    */
   static PRBool GetLastLineBaseline(const nsIFrame* aFrame, nscoord* aResult);
+
+  /**
+   * Gets the closest frame (the frame passed in or one of its parents) that
+   * qualifies as a "layer"; used in DOM0 methods that depends upon that
+   * definition. This is the nearest frame that is either positioned or scrolled
+   * (the child of a scroll frame). In Gecko terms, it's approximately
+   * equivalent to having a view, at least for simple HTML. However, views are
+   * going away, so this is a cleaner definition.
+   */
+  static nsIFrame* GetClosestLayer(nsIFrame* aFrame);
+
+  /**
+   * Set the font on aRC based on the style in aSC
+   */
+  static void SetFontFromStyle(nsIRenderingContext* aRC, nsStyleContext* aSC);
+
+  /**
+   * Convert an eStyleUnit_Chars nsStyleCoord to an nscoord.
+   *
+   * @param aStyle the style coord
+   * @param aRenderingContext the rendering context to use for font measurement
+   * @param aStyleContext the style context to use for font infomation
+   */
+  static nscoord CharsToCoord(const nsStyleCoord& aStyle,
+                              nsIRenderingContext* aRenderingContext,
+                              nsStyleContext* aStyleContext);
+
+  /**
+   * Determine if any style coordinate is nonzero
+   *   @param aCoord the style sides
+   *   @return PR_TRUE unless all the coordinates are 0%, 0 or null.
+   */
+  static PRBool HasNonZeroSide(const nsStyleSides& aSides);
+
+  /**
+   * Determine if a widget is likely to require transparency or translucency.
+   *   @param aFrame the frame of a <window>, <popup> or <menupopup> element.
+   *   @return a value suitable for passing to SetWindowTranslucency
+   */
+  static PRBool FrameHasTransparency(nsIFrame* aFrame);
 };
 
 #endif // nsLayoutUtils_h__

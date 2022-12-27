@@ -59,7 +59,6 @@
 #include "nsIRenderingContext.h"
 #include "nsIDeviceContext.h"
 #include "nsIView.h"
-#include "nsIScrollableView.h"
 #include "nsIViewManager.h"
 #include "nsPresContext.h"
 #include "nsILookAndFeel.h"
@@ -587,14 +586,10 @@ nsCaret::DrawAtPositionWithHint(nsIDOMNode*             aNode,
                                            &theFrame, &theFrameOffset);
   if (NS_FAILED(rv) || !theFrame)
     return PR_FALSE;
-  
+
   // now we have a frame, check whether it's appropriate to show the caret here
   const nsStyleUserInterface* userinterface = theFrame->GetStyleUserInterface();
-  if (
-#ifdef SUPPORT_USER_MODIFY
-        // editable content still defaults to NS_STYLE_USER_MODIFY_READ_ONLY at present. See bug 15284
-      (userinterface->mUserModify == NS_STYLE_USER_MODIFY_READ_ONLY) ||
-#endif          
+  if ((userinterface->mUserModify == NS_STYLE_USER_MODIFY_READ_ONLY) ||
       (userinterface->mUserInput == NS_STYLE_USER_INPUT_NONE) ||
       (userinterface->mUserInput == NS_STYLE_USER_INPUT_DISABLED))
   {

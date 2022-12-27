@@ -71,7 +71,6 @@
 #include "nsIContent.h"
 #include "nsINameSpaceManager.h"
 #include "nsIDocument.h"
-#include "nsIBindingManager.h"
 #include "nsIScrollableFrame.h"
 
 #include "nsIHTMLDocument.h"
@@ -124,16 +123,6 @@ struct PlaceholderMapEntry : public PLDHashEntryHdr {
   nsPlaceholderFrame *placeholderFrame;
 };
 
-PR_STATIC_CALLBACK(const void *)
-PlaceholderMapGetKey(PLDHashTable *table, PLDHashEntryHdr *hdr)
-{
-  PlaceholderMapEntry *entry = NS_STATIC_CAST(PlaceholderMapEntry*, hdr);
-  NS_ASSERTION(entry->placeholderFrame->GetOutOfFlowFrame() !=
-               (void*)0xdddddddd,
-               "Dead placeholder in placeholder map");
-  return entry->placeholderFrame->GetOutOfFlowFrame();
-}
-
 PR_STATIC_CALLBACK(PRBool)
 PlaceholderMapMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
                          const void *key)
@@ -149,7 +138,6 @@ PlaceholderMapMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
 static PLDHashTableOps PlaceholderMapOps = {
   PL_DHashAllocTable,
   PL_DHashFreeTable,
-  PlaceholderMapGetKey,
   PL_DHashVoidPtrKeyStub,
   PlaceholderMapMatchEntry,
   PL_DHashMoveEntryStub,
@@ -172,13 +160,6 @@ struct PrimaryFrameMapEntry : public PLDHashEntryHdr {
   // These ops should be used if/when we switch back to a 2-word entry.
   // See comment in |PrimaryFrameMapEntry| above.
 #if 0
-PR_STATIC_CALLBACK(const void *)
-PrimaryFrameMapGetKey(PLDHashTable *table, PLDHashEntryHdr *hdr)
-{
-  PrimaryFrameMapEntry *entry = NS_STATIC_CAST(PrimaryFrameMapEntry*, hdr);
-  return entry->frame->GetContent();
-}
-
 PR_STATIC_CALLBACK(PRBool)
 PrimaryFrameMapMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
                          const void *key)
@@ -191,7 +172,6 @@ PrimaryFrameMapMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
 static PLDHashTableOps PrimaryFrameMapOps = {
   PL_DHashAllocTable,
   PL_DHashFreeTable,
-  PrimaryFrameMapGetKey,
   PL_DHashVoidPtrKeyStub,
   PrimaryFrameMapMatchEntry,
   PL_DHashMoveEntryStub,
@@ -704,7 +684,9 @@ nsFrameManager::RemoveFrame(nsIFrame*       aParentFrame,
   // a gap where the old frame was, we invalidate it here.  (This is
   // reasonably likely to happen when removing a last child in a way
   // that doesn't change the size of the parent.)
-  aOldFrame->Invalidate(nsRect(nsPoint(0, 0), aOldFrame->GetSize()));
+  // This has to sure to invalidate the entire overflow rect; this
+  // is important in the presence of absolute positioning
+  aOldFrame->Invalidate(aOldFrame->GetOverflowRect());
 
   return aParentFrame->RemoveFrame(aListName, aOldFrame);
 }

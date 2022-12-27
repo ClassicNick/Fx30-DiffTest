@@ -880,7 +880,7 @@ nsPresContext::RootPresContext()
       if (rootFrame) {
         nsIFrame* f = nsLayoutUtils::GetCrossDocParentFrame(rootFrame);
         if (f) {
-          pc = f->GetPresContext();
+          pc = f->PresContext();
           continue;
         }
       }

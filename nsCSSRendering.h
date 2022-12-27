@@ -48,6 +48,16 @@ class nsPresContext;
 class nsCSSRendering {
 public:
   /**
+   * Initialize any static variables used by nsCSSRendering.
+   */
+  static nsresult Init();
+  
+  /**
+   * Clean up any static variables used by nsCSSRendering.
+   */
+  static void Shutdown();
+  
+  /**
    * Render the border for an element using css rendering rules
    * for borders. aSkipSides is a bitmask of the sides to skip
    * when rendering. If 0 then no sides are skipped.
@@ -207,7 +217,7 @@ public:
                                      nscolor                  aBorderColor,
                                      const nsStyleBackground* aBGColor,
                                      const nsRect&            aBorderRect,
-                                     float                    aPixelsToTwips,
+                                     float					aPixelsToTwips,
                                      PRUint8                  aStartBevelSide = 0,
                                      nscoord                  aStartBevelOffset = 0,
                                      PRUint8                  aEndBevelSide = 0,

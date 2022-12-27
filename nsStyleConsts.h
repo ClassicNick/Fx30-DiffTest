@@ -43,6 +43,10 @@
 
 #include "nsFont.h"
 
+#ifndef MOZ_CAIRO_GFX
+#define GFX_HAS_INVERT
+#endif
+
 // XXX fold this into nsStyleContext and group by nsStyleXXX struct
 
 // Indices into border/padding/margin arrays
@@ -189,7 +193,9 @@
 
 // See nsStyleColor
 #define NS_STYLE_COLOR_TRANSPARENT        0
+#ifdef GFX_HAS_INVERT
 #define NS_STYLE_COLOR_INVERT             1
+#endif
 #define NS_STYLE_COLOR_MOZ_USE_TEXT_COLOR      2
 
 // See nsStyleColor
@@ -223,6 +229,14 @@
 #define NS_STYLE_BG_ORIGIN_BORDER         0
 #define NS_STYLE_BG_ORIGIN_PADDING        1
 #define NS_STYLE_BG_ORIGIN_CONTENT        2
+
+// See nsStyleBackground
+// The parser code depends on |ing these values together.
+#define NS_STYLE_BG_POSITION_CENTER  (1<<0)
+#define NS_STYLE_BG_POSITION_TOP     (1<<1)
+#define NS_STYLE_BG_POSITION_BOTTOM  (1<<2)
+#define NS_STYLE_BG_POSITION_LEFT    (1<<3)
+#define NS_STYLE_BG_POSITION_RIGHT   (1<<4)
 
 // See nsStyleBackground
 #define NS_STYLE_BG_REPEAT_OFF                  0x00
@@ -413,6 +427,12 @@
 #define NS_STYLE_FONT_PULL_DOWN_MENU						14
 #define NS_STYLE_FONT_LIST											15
 #define NS_STYLE_FONT_FIELD											16
+
+// See nsStylePosition::mWidth, mMinWidth, mMaxWidth
+#define NS_STYLE_WIDTH_INTRINSIC                0
+#define NS_STYLE_WIDTH_MIN_INTRINSIC            1
+#define NS_STYLE_WIDTH_SHRINK_WRAP              2
+#define NS_STYLE_WIDTH_FILL                     3
 
 // See nsStylePosition.mPosition
 #define NS_STYLE_POSITION_STATIC                0
@@ -632,6 +652,13 @@
 // See nsStyleColumn
 #define NS_STYLE_COLUMN_COUNT_AUTO              0
 #define NS_STYLE_COLUMN_COUNT_UNLIMITED         (-1)
+
+// See nsStyleUIReset
+#define NS_STYLE_IME_MODE_AUTO                  0
+#define NS_STYLE_IME_MODE_NORMAL                1
+#define NS_STYLE_IME_MODE_ACTIVE                2
+#define NS_STYLE_IME_MODE_DISABLED              3
+#define NS_STYLE_IME_MODE_INACTIVE              4
 
 #ifdef MOZ_SVG
 // See nsStyleSVG

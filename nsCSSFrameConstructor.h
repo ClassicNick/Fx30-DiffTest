@@ -133,21 +133,33 @@ public:
 
   void BeginUpdate() { ++mUpdateCount; }
   void EndUpdate();
+  void RecalcQuotesAndCounters();
 
   void WillDestroyFrameTree();
 
   // Note: It's the caller's responsibility to make sure to wrap a
   // ProcessRestyledFrames call in a view update batch.
+  // This function does not call ProcessAttachedQueue() on the binding manager.
+  // If the caller wants that to happen synchronously, it needs to handle that
+  // itself.
   nsresult ProcessRestyledFrames(nsStyleChangeList& aRestyleArray);
 
+private:
   // Note: It's the caller's responsibility to make sure to wrap a
   // ProcessOneRestyle call in a view update batch.
+  // This function does not call ProcessAttachedQueue() on the binding manager.
+  // If the caller wants that to happen synchronously, it needs to handle that
+  // itself.
   void ProcessOneRestyle(nsIContent* aContent, nsReStyleHint aRestyleHint,
                          nsChangeHint aChangeHint);
 
+public:
   // Note: It's the caller's responsibility to make sure to wrap a
   // ProcessPendingRestyles call in a view update batch.
+  // ProcessPendingRestyles will handle calling ProcessAttachedQueue() on the
+  // binding manager.
   void ProcessPendingRestyles();
+
   void PostRestyleEvent(nsIContent* aContent, nsReStyleHint aRestyleHint,
                         nsChangeHint aMinChangeHint);
 
@@ -747,16 +759,20 @@ private:
   GetFirstLineStyle(nsIContent*      aContent,
                     nsStyleContext*  aStyleContext);
 
-  PRBool HaveFirstLetterStyle(nsIContent*      aContent,
-                              nsStyleContext*  aStyleContext);
+  PRBool ShouldHaveFirstLetterStyle(nsIContent*      aContent,
+                                    nsStyleContext*  aStyleContext);
 
-  PRBool HaveFirstLineStyle(nsIContent*      aContent,
-                            nsStyleContext*  aStyleContext);
+  // Check whether a given block has first-letter style.  Make sure to
+  // only pass in blocks!  And don't pass in null either.
+  PRBool HasFirstLetterStyle(nsIFrame* aBlockFrame);
 
-  void HaveSpecialBlockStyle(nsIContent*      aContent,
-                             nsStyleContext*  aStyleContext,
-                             PRBool*          aHaveFirstLetterStyle,
-                             PRBool*          aHaveFirstLineStyle);
+  PRBool ShouldHaveFirstLineStyle(nsIContent*      aContent,
+                                  nsStyleContext*  aStyleContext);
+
+  void ShouldHaveSpecialBlockStyle(nsIContent*      aContent,
+                                   nsStyleContext*  aStyleContext,
+                                   PRBool*          aHaveFirstLetterStyle,
+                                   PRBool*          aHaveFirstLineStyle);
 
   // |aContentParentFrame| should be null if it's really the same as
   // |aParentFrame|.
@@ -811,7 +827,7 @@ private:
 
   nsresult ReframeContainingBlock(nsIFrame* aFrame);
 
-  nsresult StyleChangeReflow(nsIFrame* aFrame, nsIAtom* aAttribute);
+  nsresult StyleChangeReflow(nsIFrame* aFrame);
 
   /** Helper function that searches the immediate child frames 
     * (and their children if the frames are "special")
@@ -934,8 +950,10 @@ private:
 
   // see if aContent and aSibling are legitimate siblings due to restrictions
   // imposed by table columns
+  // XXXbz this code is generally wrong, since the frame for aContent
+  // may be constructed based on tag, not based on aDisplay!
   PRBool IsValidSibling(nsIFrame*              aParentFrame,
-                        const nsIFrame&        aSibling,
+                        nsIFrame*              aSibling,
                         PRUint8                aSiblingDisplay,
                         nsIContent&            aContent,
                         PRUint8&               aDisplay);
@@ -999,6 +1017,7 @@ private:
   PRPackedBool        mQuotesDirty : 1;
   PRPackedBool        mCountersDirty : 1;
   PRPackedBool        mInitialContainingBlockIsAbsPosContainer : 1;
+  PRPackedBool        mIsDestroyingFrameTree : 1;
 
   nsRevocableEventPtr<RestyleEvent> mRestyleEvent;
 

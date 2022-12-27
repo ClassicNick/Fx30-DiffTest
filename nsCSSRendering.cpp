@@ -51,7 +51,6 @@
 #include "nsIPresShell.h"
 #include "nsFrameManager.h"
 #include "nsStyleContext.h"
-#include "nsIScrollableView.h"
 #include "nsGkAtoms.h"
 #include "nsIDrawingSurface.h"
 #include "nsTransform2D.h"
@@ -198,13 +197,31 @@ protected:
   }
 };
 
-static InlineBackgroundData gInlineBGData;
+static InlineBackgroundData* gInlineBGData = nsnull;
 
 static void GetPath(nsFloatPoint aPoints[],nsPoint aPolyPath[],PRInt32 *aCurIndex,ePathTypes  aPathType,PRInt32 &aC1Index,float aFrac=0);
 
 // FillRect or InvertRect depending on the renderingaInvert parameter
 static void FillOrInvertRect(nsIRenderingContext& aRC,nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight, PRBool aInvert);
 static void FillOrInvertRect(nsIRenderingContext& aRC,const nsRect& aRect, PRBool aInvert);
+
+// Initialize any static variables used by nsCSSRendering.
+nsresult nsCSSRendering::Init()
+{  
+  NS_ASSERTION(!gInlineBGData, "Init called twice");
+  gInlineBGData = new InlineBackgroundData();
+  if (!gInlineBGData)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  return NS_OK;
+}
+
+// Clean up any global variables used by nsCSSRendering.
+void nsCSSRendering::Shutdown()
+{
+  delete gInlineBGData;
+  gInlineBGData = nsnull;
+}
 
 // Draw a line, skipping that portion which crosses aGap. aGap defines a rectangle gap
 // This services fieldset legends and only works for coords defining horizontal lines.
@@ -926,14 +943,16 @@ PRBool  skippedSide = PR_FALSE;
       // (because invert is not supported on cur platform)
       nscolor sideColor(aColorStyle->mColor);
 
-      PRBool  isInvert=PR_FALSE;
+      PRBool  isInvert = PR_FALSE;
       if (aDoOutline) {
-        // see if the outline color is 'invert'
-        if (aOutlineStyle->GetOutlineInvert()) { 
-          isInvert = PR_TRUE;
-        } else {
+        if (!aOutlineStyle->GetOutlineInitialColor()) {
           aOutlineStyle->GetOutlineColor(sideColor);
         }
+#ifdef GFX_HAS_INVERT
+        else {
+          isInvert = PR_TRUE;
+        }
+#endif
       } else {
         PRBool transparent; 
         PRBool foreground;
@@ -1719,6 +1738,7 @@ void nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
 
 #ifdef MOZ_CAIRO_GFX
   gfxContext *ctx = (gfxContext*) aRenderingContext.GetNativeGraphicData(nsIRenderingContext::NATIVE_THEBES_CONTEXT);
+  gfxContext::AntialiasMode oldMode = ctx->CurrentAntialiasMode();
   ctx->SetAntialiasMode(gfxContext::MODE_ALIASED);
 #endif
 
@@ -1752,7 +1772,7 @@ void nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
   }
 
 #ifdef MOZ_CAIRO_GFX
-  ctx->SetAntialiasMode(gfxContext::MODE_COVERAGE);
+  ctx->SetAntialiasMode(oldMode);
 #endif
 }
 
@@ -2026,15 +2046,11 @@ nscoord width, offset;
     }
   }
 
-  nsRect* overflowArea = aForFrame->GetOverflowAreaProperty(PR_FALSE);
-  if (!overflowArea) {
-    NS_WARNING("Hmm, outline painting should always find an overflow area here");
-    return;
-  }
+  nsRect overflowArea = aForFrame->GetOverflowRect();
 
   // get the offset for our outline
   aOutlineStyle.GetOutlineOffset(offset);
-  nsRect outside(*overflowArea + aBorderArea.TopLeft());
+  nsRect outside(overflowArea + aBorderArea.TopLeft());
   nsRect inside(outside);
   if (width + offset >= 0) {
     // the overflow area is exactly the outside edge of the outline
@@ -2072,20 +2088,24 @@ nscoord width, offset;
 
   // Draw all the other sides
 
-  nscoord twipsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
+  nscoord appUnitsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
 
   // default to current color in case it is invert color
   // and the platform does not support that
   nscolor outlineColor(ourColor->mColor);
   PRBool  canDraw = PR_FALSE;
+#ifdef GFX_HAS_INVERT
   PRBool  modeChanged=PR_FALSE;
+#endif
 
-  // see if the outline color is 'invert' or can invert.
-  if (aOutlineStyle.GetOutlineInvert()) {
+  // see if the outline color is special color.
+  if (aOutlineStyle.GetOutlineInitialColor()) {
     canDraw = PR_TRUE;
+#ifdef GFX_HAS_INVERT
     if( NS_SUCCEEDED(aRenderingContext.SetPenMode(nsPenMode_kInvert)) ) {
       modeChanged=PR_TRUE;
     }
+#endif
   } else {
     canDraw = aOutlineStyle.GetOutlineColor(outlineColor);
   }
@@ -2095,29 +2115,30 @@ nscoord width, offset;
              outlineStyle,
              outlineColor,
              bgColor->mBackgroundColor, outside, inside, aSkipSides,
-             twipsPerPixel, aGap);
+             appUnitsPerPixel, aGap);
 
     DrawSide(aRenderingContext, NS_SIDE_LEFT,
              outlineStyle, 
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
-             twipsPerPixel, aGap);
+             appUnitsPerPixel, aGap);
 
     DrawSide(aRenderingContext, NS_SIDE_TOP,
              outlineStyle,
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
-             twipsPerPixel, aGap);
+             appUnitsPerPixel, aGap);
 
     DrawSide(aRenderingContext, NS_SIDE_RIGHT,
              outlineStyle,
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
-             twipsPerPixel, aGap);
-
+             appUnitsPerPixel, aGap);
+#ifdef GFX_HAS_INVERT
     if(modeChanged ) {
       aRenderingContext.SetPenMode(nsPenMode_kNone);
-    }  
+    }
+#endif
   }
 }
 
@@ -2161,10 +2182,10 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
   DrawDashedSegments(aRenderingContext, aBorderArea, aBorderEdges, aSkipSides, aGap);
 
   // Draw all the other sides
-  nscoord twipsPerPixel;
+  nscoord appUnitsPerPixel;
   float p2t;
   p2t = aPresContext->PixelsToTwips();
-  twipsPerPixel = (nscoord) p2t;/* XXX huh!*/
+  appUnitsPerPixel = (nscoord) p2t;/* XXX huh!*/
 
   if (0 == (aSkipSides & (1<<NS_SIDE_TOP))) {
     PRInt32 segmentCount = aBorderEdges->mEdges[NS_SIDE_TOP].Count();
@@ -2187,7 +2208,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside,aSkipSides,
-               twipsPerPixel, aGap);
+               appUnitsPerPixel, aGap);
     }
   }
   if (0 == (aSkipSides & (1<<NS_SIDE_LEFT))) {
@@ -2209,7 +2230,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside, aSkipSides,
-               twipsPerPixel, aGap);
+               appUnitsPerPixel, aGap);
     }
   }
   if (0 == (aSkipSides & (1<<NS_SIDE_BOTTOM))) {
@@ -2234,7 +2255,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside,aSkipSides,
-               twipsPerPixel, aGap);
+               appUnitsPerPixel, aGap);
     }
   }
   if (0 == (aSkipSides & (1<<NS_SIDE_RIGHT))) {
@@ -2266,7 +2287,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside,aSkipSides,
-               twipsPerPixel, aGap);
+               appUnitsPerPixel, aGap);
     }
   }
 }
@@ -2536,7 +2557,7 @@ FindCanvasBackground(nsIFrame* aForFrame,
             // and thus |InitialReflow| on the pres shell.  See bug 119351
             // for the ugly details.
             if (bodyContent) {
-              nsIFrame *bodyFrame = aForFrame->GetPresContext()->GetPresShell()->
+              nsIFrame *bodyFrame = aForFrame->PresContext()->GetPresShell()->
                 GetPrimaryFrameFor(bodyContent);
               if (bodyFrame)
                 result = bodyFrame->GetStyleBackground();
@@ -2623,7 +2644,7 @@ nsCSSRendering::FindBackground(nsPresContext* aPresContext,
 void
 nsCSSRendering::DidPaint()
 {
-  gInlineBGData.Reset();
+  gInlineBGData->Reset();
 }
 
 void
@@ -2691,16 +2712,6 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
   }
 
   vm->SetDefaultBackgroundColor(canvasColor.mBackgroundColor);
-
-  // Since nsHTMLContainerFrame::CreateViewForFrame might have created
-  // the view before we knew about the child with the fixed background
-  // attachment (root or BODY) or the stylesheet specifying that
-  // attachment, set the BitBlt flag here as well.
-  if (canvasColor.mBackgroundAttachment == NS_STYLE_BG_ATTACHMENT_FIXED) {
-    nsIView *view = aForFrame->GetView();
-    if (view)
-      vm->SetViewBitBltEnabled(view, PR_FALSE);
-  }
 
   PaintBackgroundWithSC(aPresContext, aRenderingContext, aForFrame,
                         aDirtyRect, aBorderArea, canvasColor,
@@ -2865,14 +2876,14 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
       bgOriginArea = aBorderArea;
       break;
     case NS_STYLE_BG_INLINE_POLICY_BOUNDING_BOX:
-      bgOriginArea = gInlineBGData.GetBoundingRect(aForFrame) +
+      bgOriginArea = gInlineBGData->GetBoundingRect(aForFrame) +
                      aBorderArea.TopLeft();
       break;
     default:
       NS_ERROR("Unknown background-inline-policy value!  "
                "Please, teach me what to do.");
     case NS_STYLE_BG_INLINE_POLICY_CONTINUOUS:
-      bgOriginArea = gInlineBGData.GetContinuousRect(aForFrame) +
+      bgOriginArea = gInlineBGData->GetContinuousRect(aForFrame) +
                      aBorderArea.TopLeft();
       break;
     }
@@ -3170,6 +3181,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
 
   // Take the intersection again to paint only the required area.
   nsRect absTileRect = tileRect + aBorderArea.TopLeft();
+  
   nsRect drawRect;
   if (drawRect.IntersectRect(absTileRect, dirtyRect)) {
     // Note that due to the way FindTileStart works we're guaranteed
@@ -3185,7 +3197,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
     if (sourceRect.XMost() <= tileWidth && sourceRect.YMost() <= tileHeight) {
       // The entire drawRect is contained inside a single tile; just
       // draw the corresponding part of the image once.
-      aRenderingContext.DrawImage(image, sourceRect, drawRect);
+      aRenderingContext.DrawImage(image, absTileRect, drawRect);
     } else {
       aRenderingContext.DrawTile(image, absTileRect.x, absTileRect.y, &drawRect);
     }
@@ -3299,12 +3311,12 @@ nsCSSRendering::PaintRoundedBackground(nsPresContext* aPresContext,
   nsFloatPoint  thePath[MAXPATHSIZE];
   static nsPoint       polyPath[MAXPOLYPATHSIZE];
   PRInt16       np;
-  nscoord       twipsPerPixel;
+  nscoord       appUnitsPerPixel;
   float         p2t;
 
   // needed for our border thickness
   p2t = aPresContext->PixelsToTwips();
-  twipsPerPixel = NSToCoordRound(p2t);
+  appUnitsPerPixel = NSToCoordRound(p2t);
 
   nscolor color = aColor.mBackgroundColor;
   if (!aCanPaintNonWhite) {
@@ -3325,7 +3337,8 @@ nsCSSRendering::PaintRoundedBackground(nsPresContext* aPresContext,
   }
 
   // set the rounded rect up, and let'er rip
-  outerPath.Set(aBgClipArea.x,aBgClipArea.y,aBgClipArea.width,aBgClipArea.height,aTheRadius,twipsPerPixel);
+  outerPath.Set(aBgClipArea.x, aBgClipArea.y, aBgClipArea.width,
+                aBgClipArea.height, aTheRadius, appUnitsPerPixel);
   outerPath.GetRoundedBorders(UL,UR,LL,LR);
 
   // BUILD THE ENTIRE OUTSIDE PATH
@@ -3407,7 +3420,7 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
   nsFloatPoint  thePath[MAXPATHSIZE];
   PRInt16       np;
   nsMargin      border;
-  nscoord       twipsPerPixel,qtwips;
+  nscoord       appUnitsPerPixel,quarterPixel;
   float         p2t;
 
   NS_ASSERTION((aIsOutline && aOutlineStyle) || (!aIsOutline && aBorderStyle), "null params not allowed");
@@ -3429,13 +3442,14 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
   }
 
   // needed for our border thickness
-  twipsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
+  appUnitsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
 
   // Base our thickness check on the segment being less than a pixel and 1/2
-  qtwips = twipsPerPixel >> 2;
+  quarterPixel = appUnitsPerPixel >> 2;
   //qtwips = twipsPerPixel;
 
-  outerPath.Set(aBorderArea.x,aBorderArea.y,aBorderArea.width,aBorderArea.height,aBorderRadius,twipsPerPixel);
+  outerPath.Set(aBorderArea.x, aBorderArea.y, aBorderArea.width,
+                aBorderArea.height, aBorderRadius, appUnitsPerPixel);
   outerPath.GetRoundedBorders(UL,UR,LL,LR);
   outerPath.CalcInsetCurves(IUL,IUR,ILL,ILR,border);
 
@@ -3459,7 +3473,8 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
     thePath[np++].MoveTo(Icr2.mAnc2.x, Icr2.mAnc2.y);
     thePath[np++].MoveTo(Icr2.mCon.x, Icr2.mCon.y);
     thePath[np++].MoveTo(Icr2.mAnc1.x, Icr2.mAnc1.y);
-    RenderSide(thePath,aRenderingContext,aBorderStyle,aOutlineStyle,aStyleContext,NS_SIDE_TOP,border,qtwips, aIsOutline);
+    RenderSide(thePath, aRenderingContext, aBorderStyle, aOutlineStyle,
+               aStyleContext, NS_SIDE_TOP, border, quarterPixel, aIsOutline);
   }
   // RIGHT  LINE ----------------------------------------------------------------
   LR.MidPointDivide(&cr2,&cr3);
@@ -3479,7 +3494,8 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
     thePath[np++].MoveTo(Icr4.mAnc2.x,Icr4.mAnc2.y);
     thePath[np++].MoveTo(Icr4.mCon.x, Icr4.mCon.y);
     thePath[np++].MoveTo(Icr4.mAnc1.x,Icr4.mAnc1.y);
-    RenderSide(thePath,aRenderingContext,aBorderStyle,aOutlineStyle,aStyleContext,NS_SIDE_RIGHT,border,qtwips, aIsOutline);
+    RenderSide(thePath, aRenderingContext, aBorderStyle, aOutlineStyle,
+               aStyleContext, NS_SIDE_RIGHT, border, quarterPixel, aIsOutline);
   }
 
   // bottom line ----------------------------------------------------------------
@@ -3500,7 +3516,8 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
     thePath[np++].MoveTo(Icr3.mAnc2.x, Icr3.mAnc2.y);
     thePath[np++].MoveTo(Icr3.mCon.x, Icr3.mCon.y);
     thePath[np++].MoveTo(Icr3.mAnc1.x, Icr3.mAnc1.y);
-    RenderSide(thePath,aRenderingContext,aBorderStyle,aOutlineStyle,aStyleContext,NS_SIDE_BOTTOM,border,qtwips, aIsOutline);
+    RenderSide(thePath, aRenderingContext, aBorderStyle, aOutlineStyle,
+               aStyleContext, NS_SIDE_BOTTOM, border, quarterPixel, aIsOutline);
   }
   // left line ----------------------------------------------------------------
   if(0==border.left)
@@ -3521,7 +3538,8 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
   thePath[np++].MoveTo(Icr4.mCon.x, Icr4.mCon.y);
   thePath[np++].MoveTo(Icr4.mAnc1.x, Icr4.mAnc1.y);
 
-  RenderSide(thePath,aRenderingContext,aBorderStyle,aOutlineStyle,aStyleContext,NS_SIDE_LEFT,border,qtwips, aIsOutline);
+  RenderSide(thePath, aRenderingContext, aBorderStyle, aOutlineStyle,
+             aStyleContext, NS_SIDE_LEFT, border, quarterPixel, aIsOutline);
 }
 
 
@@ -4023,26 +4041,26 @@ QBCurve::MidPointDivide(QBCurve *A,QBCurve *B)
 
 void FillOrInvertRect(nsIRenderingContext& aRC, nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight, PRBool aInvert)
 {
-#ifndef MOZ_CAIRO_GFX
+#ifdef GFX_HAS_INVERT
   if (aInvert) {
     aRC.InvertRect(aX, aY, aWidth, aHeight);
   } else {
 #endif
     aRC.FillRect(aX, aY, aWidth, aHeight);
-#ifndef MOZ_CAIRO_GFX
+#ifdef GFX_HAS_INVERT
   }
 #endif
 }
 
 void FillOrInvertRect(nsIRenderingContext& aRC, const nsRect& aRect, PRBool aInvert)
 {
-#ifndef MOZ_CAIRO_GFX
+#ifdef GFX_HAS_INVERT
   if (aInvert) {
     aRC.InvertRect(aRect);
   } else {
 #endif
     aRC.FillRect(aRect);
-#ifndef MOZ_CAIRO_GFX
+#ifdef GFX_HAS_INVERT
   }
 #endif
 }
@@ -4187,7 +4205,7 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
                                        nscolor                  aBorderColor,
                                        const nsStyleBackground* aBGColor,
                                        const nsRect&            aBorder,
-                                       float                    aPixelsToTwips,
+                                       float                  aPixelsToTwips,
                                        PRUint8                  aStartBevelSide,
                                        nscoord                  aStartBevelOffset,
                                        PRUint8                  aEndBevelSide,
@@ -4205,6 +4223,12 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
     aStartBevelOffset = 0;
     aEndBevelOffset = 0;
   }
+
+#ifdef MOZ_CAIRO_GFX
+  gfxContext *ctx = (gfxContext*) aContext.GetNativeGraphicData(nsIRenderingContext::NATIVE_THEBES_CONTEXT);
+  gfxContext::AntialiasMode oldMode = ctx->CurrentAntialiasMode();
+  ctx->SetAntialiasMode(gfxContext::MODE_ALIASED);
+#endif
 
   switch (aBorderStyle) {
   case NS_STYLE_BORDER_STYLE_NONE:
@@ -4227,21 +4251,21 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
       if (horizontal) {
         GetDashInfo(aBorder.width, dashLength, twipsPerPixel, numDashSpaces, startDashLength, endDashLength);
         nsRect rect(aBorder.x, aBorder.y, startDashLength, aBorder.height);
-        DrawSolidBorderSegment(aContext, rect, PR_TRUE);
+        DrawSolidBorderSegment(aContext, rect, twipsPerPixel);
         for (PRInt32 spaceX = 0; spaceX < numDashSpaces; spaceX++) {
           rect.x += rect.width + dashLength;
           rect.width = (spaceX == (numDashSpaces - 1)) ? endDashLength : dashLength;
-          DrawSolidBorderSegment(aContext, rect, PR_TRUE);
+          DrawSolidBorderSegment(aContext, rect, twipsPerPixel);
         }
       }
       else {
         GetDashInfo(aBorder.height, dashLength, twipsPerPixel, numDashSpaces, startDashLength, endDashLength);
         nsRect rect(aBorder.x, aBorder.y, aBorder.width, startDashLength);
-        DrawSolidBorderSegment(aContext, rect, PR_FALSE);
+        DrawSolidBorderSegment(aContext, rect, twipsPerPixel);
         for (PRInt32 spaceY = 0; spaceY < numDashSpaces; spaceY++) {
           rect.y += rect.height + dashLength;
           rect.height = (spaceY == (numDashSpaces - 1)) ? endDashLength : dashLength;
-          DrawSolidBorderSegment(aContext, rect, PR_FALSE);
+          DrawSolidBorderSegment(aContext, rect, twipsPerPixel);
         }
       }
     }
@@ -4399,6 +4423,10 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
     NS_ASSERTION(PR_FALSE, "Unexpected 'auto' table border");
     break;
   }
+
+#ifdef MOZ_CAIRO_GFX
+  ctx->SetAntialiasMode(oldMode);
+#endif
 }
 
 // End table border-collapsing section

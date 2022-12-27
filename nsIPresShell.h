@@ -88,21 +88,26 @@ class nsILayoutHistoryState;
 class nsIReflowCallback;
 class nsISupportsArray;
 class nsIDOMNode;
+class nsIRegion;
 class nsIStyleFrameConstruction;
 class nsIStyleSheet;
 class nsCSSFrameConstructor;
 class nsISelection;
 template<class E> class nsCOMArray;
 class nsWeakFrame;
+class nsIScrollableFrame;
+class gfxASurface;
+class gfxContext;
 
 typedef short SelectionType;
+typedef PRUint32 nsFrameState;
 
-// 2b3dc6f2-1364-4535-9a23-2b728ebbd051
-#define NS_IPRESSHELL_IID     \
-{ 0x2b3dc6f2, 0x1364, 0x4535, \
- { 0x9a, 0x23, 0x2b, 0x72, 0x8e, 0xbb, 0xd0, 0x51 } }
+// 9562bb2b-990c-4875-aafd-bd46fc9a4fc1
+#define NS_IPRESSHELL_IID \
+{ 0x9562bb2b, 0x990c, 0x4875, \
+  { 0xaa, 0xfd, 0xbd, 0x46, 0xfc, 0x9a, 0x4f, 0xc1 } }
 
-// Constants uses for ScrollFrameIntoView() function
+// Constants for ScrollContentIntoView() function
 #define NS_PRESSHELL_SCROLL_TOP      0
 #define NS_PRESSHELL_SCROLL_BOTTOM   100
 #define NS_PRESSHELL_SCROLL_LEFT     0
@@ -120,12 +125,6 @@ typedef short SelectionType;
 #define VERIFY_REFLOW_REALLY_NOISY_RC 0x20
 #define VERIFY_REFLOW_INCLUDE_SPACE_MANAGER 0x40
 #define VERIFY_REFLOW_DURING_RESIZE_REFLOW  0x80
-
-// for PostAttributeChanged
-enum nsAttributeChangeType {
-  eChangeType_Set = 0,       // Set attribute
-  eChangeType_Remove = 1     // Remove attribute
-};
 
 /**
  * Presentation shell interface. Presentation shells are the
@@ -255,7 +254,8 @@ public:
    */
   nsFrameSelection* FrameSelection() { return mSelection; }
 
-  // Make shell be a document observer
+  // Make shell be a document observer.  If called after Destroy() has
+  // been called on the shell, this will be ignored.
   NS_IMETHOD BeginObservingDocument() = 0;
 
   // Make shell stop being a document observer
@@ -273,7 +273,11 @@ public:
    * object and then reflows the frame model into the specified width and
    * height.
    *
-   * The coordinates for aWidth and aHeight must be in standard nscoord's.
+   * The coordinates for aWidth and aHeight must be in standard nscoords.
+   *
+   * Callers of this method must hold a reference to this shell that
+   * is guaranteed to survive through arbitrary script execution.
+   * Calling InitialReflow can execute arbitrary script.
    */
   NS_IMETHOD InitialReflow(nscoord aWidth, nscoord aHeight) = 0;
 
@@ -299,6 +303,11 @@ public:
    * Get root scroll frame from FrameManager()->GetRootFrame().
    */
   nsIFrame* GetRootScrollFrame() const;
+
+  /*
+   * The same as GetRootScrollFrame, but returns an nsIScrollableFrame
+   */
+  nsIScrollableFrame* GetRootScrollFrameAsScrollable() const;
 
   /**
    * Returns the page sequence frame associated with the frame hierarchy.
@@ -339,10 +348,11 @@ public:
                                     nsIFrame** aPlaceholderFrame) const = 0;
 
   /**
-   * Tell the pres shell that a frame is dirty (as indicated by bits)
-   * and needs Reflow.  It's OK if this is an ancestor of the frame needing
-   * reflow as long as the ancestor chain between them doesn't cross a reflow
-   * root.
+   * Tell the pres shell that a frame needs to be marked dirty and needs
+   * Reflow.  It's OK if this is an ancestor of the frame needing reflow as
+   * long as the ancestor chain between them doesn't cross a reflow root.  The
+   * bit to add should be either NS_FRAME_IS_DIRTY or
+   * NS_FRAME_HAS_DIRTY_CHILDREN (but not both!).
    */
   enum IntrinsicDirty {
     // XXXldb eResize should be renamed
@@ -351,7 +361,8 @@ public:
     eStyleChange // Do eTreeChange, plus all of aFrame's descendants
   };
   NS_IMETHOD FrameNeedsReflow(nsIFrame *aFrame,
-                              IntrinsicDirty aIntrinsicDirty) = 0;
+                              IntrinsicDirty aIntrinsicDirty,
+                              nsFrameState aBitToAdd) = 0;
 
   NS_IMETHOD CancelAllPendingReflows() = 0;
 
@@ -379,15 +390,9 @@ public:
   NS_IMETHOD FlushPendingNotifications(mozFlushType aType) = 0;
 
   /**
-   * Post a request to set and attribute after reflow has finished.
+   * Callbacks will be called even if reflow itself fails for
+   * some reason.
    */
-  NS_IMETHOD PostAttributeChange(nsIContent* aContent,
-                                 PRInt32 aNameSpaceID, 
-                                 nsIAtom* aName,
-                                 const nsString& aValue,
-                                 PRBool aNotify,
-                                 nsAttributeChangeType aType) = 0;
-
   NS_IMETHOD PostReflowCallback(nsIReflowCallback* aCallback) = 0;
   NS_IMETHOD CancelReflowCallback(nsIReflowCallback* aCallback) = 0;
 
@@ -411,36 +416,37 @@ public:
   NS_IMETHOD GoToAnchor(const nsAString& aAnchorName, PRBool aScroll) = 0;
 
   /**
-   * Scrolls the view of the document so that the frame is displayed at the 
-   * top of the window.
+   * Scrolls the view of the document so that the primary frame of the content
+   * is displayed at the top of the window. Layout is flushed before scrolling.
    *
-   * @param aFrame    The frame to scroll into view
+   * @param aContent  The content object of which primary frame should be
+   *                  scrolled into view.
    * @param aVPercent How to align the frame vertically. A value of 0
-   *                    (NS_PRESSHELL_SCROLL_TOP) means the frame's upper edge is
-   *                    aligned with the top edge of the visible area. A value of
-   *                    100 (NS_PRESSHELL_SCROLL_BOTTOM) means the frame's bottom
-   *                    edge is aligned with the bottom edge of the visible area.
-   *                    For values in between, the point "aVPercent" down the frame
-   *                    is placed at the point "aVPercent" down the visible area. A
-   *                    value of 50 (NS_PRESSHELL_SCROLL_CENTER) centers the frame
-   *                    vertically. A value of NS_PRESSHELL_SCROLL_ANYWHERE means move
-   *                    the frame the minimum amount necessary in order for the entire
-   *                    frame to be visible vertically (if possible)
+   *                  (NS_PRESSHELL_SCROLL_TOP) means the frame's upper edge is
+   *                  aligned with the top edge of the visible area. A value of
+   *                  100 (NS_PRESSHELL_SCROLL_BOTTOM) means the frame's bottom
+   *                  edge is aligned with the bottom edge of the visible area.
+   *                  For values in between, the point "aVPercent" down the frame
+   *                  is placed at the point "aVPercent" down the visible area. A
+   *                  value of 50 (NS_PRESSHELL_SCROLL_CENTER) centers the frame
+   *                  vertically. A value of NS_PRESSHELL_SCROLL_ANYWHERE means move
+   *                  the frame the minimum amount necessary in order for the entire
+   *                  frame to be visible vertically (if possible)
    * @param aHPercent How to align the frame horizontally. A value of 0
-   *                    (NS_PRESSHELL_SCROLL_LEFT) means the frame's left edge is
-   *                    aligned with the left edge of the visible area. A value of
-   *                    100 (NS_PRESSHELL_SCROLL_RIGHT) means the frame's right
-   *                    edge is aligned with the right edge of the visible area.
-   *                    For values in between, the point "aVPercent" across the frame
-   *                    is placed at the point "aVPercent" across the visible area.
-   *                    A value of 50 (NS_PRESSHELL_SCROLL_CENTER) centers the frame
-   *                    horizontally . A value of NS_PRESSHELL_SCROLL_ANYWHERE means move
-   *                    the frame the minimum amount necessary in order for the entire
-   *                    frame to be visible horizontally (if possible)
+   *                  (NS_PRESSHELL_SCROLL_LEFT) means the frame's left edge is
+   *                  aligned with the left edge of the visible area. A value of
+   *                  100 (NS_PRESSHELL_SCROLL_RIGHT) means the frame's right
+   *                  edge is aligned with the right edge of the visible area.
+   *                  For values in between, the point "aVPercent" across the frame
+   *                  is placed at the point "aVPercent" across the visible area.
+   *                  A value of 50 (NS_PRESSHELL_SCROLL_CENTER) centers the frame
+   *                  horizontally . A value of NS_PRESSHELL_SCROLL_ANYWHERE means move
+   *                  the frame the minimum amount necessary in order for the entire
+   *                  frame to be visible horizontally (if possible)
    */
-  NS_IMETHOD ScrollFrameIntoView(nsIFrame *aFrame,
-                                 PRIntn   aVPercent, 
-                                 PRIntn   aHPercent) const = 0;
+  NS_IMETHOD ScrollContentIntoView(nsIContent* aContent,
+                                   PRIntn      aVPercent,
+                                   PRIntn      aHPercent) const = 0;
 
   /**
    * Suppress notification of the frame manager that frames are
@@ -517,6 +523,7 @@ public:
 
   /**
     * Interface to dispatch events via the presshell
+    * @note The caller must have a strong reference to the PresShell.
     */
   NS_IMETHOD HandleEventWithTarget(nsEvent* aEvent,
                                    nsIFrame* aFrame,
@@ -525,6 +532,7 @@ public:
 
   /**
    * Dispatch event to content only (NOT full processing)
+   * @note The caller must have a strong reference to the PresShell.
    */
   NS_IMETHOD HandleDOMEventWithTarget(nsIContent* aTargetContent,
                                       nsEvent* aEvent,
@@ -551,36 +559,6 @@ public:
    * @param aIsReflowLocked returns PR_TRUE if reflow is locked, PR_FALSE otherwise
    */
   NS_IMETHOD IsReflowLocked(PRBool* aIsLocked) = 0;  
-
-  /**
-   * Store the nsIAnonymousContentCreator-generated anonymous
-   * content that's associated with an element. The new anonymous content
-   * is added to whatever anonymous content might already be associated with
-   * the element.
-   * @param aContent the element with which the anonymous
-   *   content is to be associated with
-   * @param aAnonymousElements an array of nsIContent
-   *   objects, or null to indicate that any anonymous
-   *   content should be dissociated from the aContent
-   */
-  NS_IMETHOD SetAnonymousContentFor(nsIContent* aContent, nsISupportsArray* aAnonymousElements) = 0;
-
-  /**
-   * Retrieve the nsIAnonymousContentCreator-generated anonymous
-   * content that's associated with an element.
-   * @param aContent the element for which to retrieve the
-   *   associated anonymous content
-   * @param aAnonymousElements an array of nsIContent objects,
-   *   or null to indicate that there are no anonymous elements
-   *   associated with aContent
-   */
-  NS_IMETHOD GetAnonymousContentFor(nsIContent* aContent, nsISupportsArray** aAnonymousElements) = 0;
-
-  /**
-   * Release all nsIAnonymousContentCreator-generated
-   * anonymous content associated with the shell.
-   */
-  NS_IMETHOD ReleaseAnonymousContent() = 0;
 
   /**
    * Called to find out if painting is suppressed for this presshell.  If it is suppressd,
@@ -667,7 +645,8 @@ public:
   virtual void VerifyStyleTree() = 0;
 #endif
 
-  PRBool IsAccessibilityActive() { return mIsAccessibilityActive; }
+  static PRBool gIsAccessibilityActive;
+  static PRBool IsAccessibilityActive() { return gIsAccessibilityActive; }
 
   /**
    * Stop all active elements (plugins and the caret) in this presentation and
@@ -692,7 +671,9 @@ public:
   {
     mForwardingContainer = aContainer;
   }
-  
+
+  virtual void HidePopups() = 0;
+
   /**
    * Dump window contents into a new offscreen rendering context.
    * @param aRect is the region to capture into the offscreen buffer, in the
@@ -718,6 +699,11 @@ public:
 
   void AddWeakFrame(nsWeakFrame* aWeakFrame);
   void RemoveWeakFrame(nsWeakFrame* aWeakFrame);
+
+#ifdef NS_DEBUG
+  nsIFrame* GetDrawEventTargetFrame() { return mDrawEventTargetFrame; }
+#endif
+
 protected:
   // IMPORTANT: The ownership implicit in the following member variables
   // has been explicitly checked.  If you add any members to this class,
@@ -733,6 +719,10 @@ protected:
   nsFrameSelection*         mSelection;
   nsFrameManagerBase        mFrameManager;  // [OWNS]
   nsWeakPtr                 mForwardingContainer;
+
+#ifdef NS_DEBUG
+  nsIFrame*                 mDrawEventTargetFrame;
+#endif
 
   PRPackedBool              mStylesHaveChanged;
   PRPackedBool              mDidInitialReflow;
