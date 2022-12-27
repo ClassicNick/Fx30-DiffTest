@@ -69,10 +69,8 @@ public:
                        nscoord             aClearance,
                        PRBool              aIsAdjacentWithTop,
                        nsMargin&           aComputedOffsets,
-                       nsLineBox*          aLine,
                        nsHTMLReflowState&  aReflowState,
-                       nsReflowStatus&     aReflowStatus,
-                       nsBlockReflowState& aState);
+                       nsReflowStatus&     aReflowStatus);
 
   PRBool PlaceBlock(const nsHTMLReflowState& aReflowState,
                     PRBool                   aForceFit,
@@ -89,6 +87,10 @@ public:
 
   nscoord GetTopMargin() const {
     return mTopMargin.get();
+  }
+
+  const nsMargin& GetMargin() const {
+    return mMargin;
   }
 
   const nsHTMLReflowMetrics& GetMetrics() const {
@@ -120,6 +122,13 @@ protected:
   nsIFrame* mFrame;
   nsRect mSpace;
 
+  // Spacing style for the frame we are reflowing; only valid after reflow
+  const nsStyleBorder* mStyleBorder;
+  const nsStyleMargin* mStyleMargin;
+  const nsStylePadding* mStylePadding;
+
+  nscoord mComputedWidth;               // copy of reflowstate's computedWidth
+  nsMargin mMargin;
   nscoord mX, mY;
   nsHTMLReflowMetrics mMetrics;
   nsCollapsingMargin mTopMargin;

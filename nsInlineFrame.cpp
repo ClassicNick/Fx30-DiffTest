@@ -78,14 +78,34 @@ NS_NewInlineFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMETHODIMP
 nsInlineFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
 {
-  NS_PRECONDITION(aInstancePtr, "null out param");
-
+  if (nsnull == aInstancePtr) {
+    return NS_ERROR_NULL_POINTER;
+  }
   if (aIID.Equals(kInlineFrameCID)) {
-    *aInstancePtr = this;
+    nsInlineFrame* tmp = this;
+    *aInstancePtr = (void*) tmp;
     return NS_OK;
   }
-
   return nsInlineFrameSuper::QueryInterface(aIID, aInstancePtr);
+}
+
+void
+nsInlineFrame::Destroy()
+{
+  if (mState & NS_FRAME_GENERATED_CONTENT) {
+    // Make sure all the content nodes for the generated content inside
+    // this frame know it's going away.
+    // This is duplicated in nsBlockFrame::Destroy.
+    // See also nsCSSFrameConstructor::CreateGeneratedContentFrame which
+    // created this frame.
+
+    // XXXbz would this be better done via a global structure in
+    // nsCSSFrameConstructor that could key off of
+    // GeneratedContentFrameRemoved or something?  The problem is that
+    // our kids are gone by the time that's called.
+    nsContainerFrame::CleanupGeneratedContentIn(mContent, this);
+  }
+  nsInlineFrameSuper::Destroy();
 }
 
 #ifdef DEBUG
@@ -225,15 +245,6 @@ nsInlineFrame::ComputeSize(nsIRenderingContext *aRenderingContext,
   return nsSize(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
 }
 
-nsRect
-nsInlineFrame::ComputeTightBounds(gfxContext* aContext) const
-{
-  // be conservative
-  if (GetStyleContext()->HasTextDecorations())
-    return GetOverflowRect();
-  return ComputeSimpleTightBounds(aContext);
-}
-
 void
 nsInlineFrame::ReparentFloatsForInlineChild(nsIFrame* aOurLineContainer,
                                             nsIFrame* aFrame,
@@ -242,10 +253,6 @@ nsInlineFrame::ReparentFloatsForInlineChild(nsIFrame* aOurLineContainer,
   NS_ASSERTION(aOurLineContainer->GetNextContinuation() ||
                aOurLineContainer->GetPrevContinuation(),
                "Don't call this when we have no continuation, it's a waste");
-  if (!aFrame) {
-    NS_ASSERTION(aReparentSiblings, "Why did we get called?");
-    return;
-  }
 
   nsIFrame* ancestor = aFrame;
   nsIFrame* ancestorBlockChild;
@@ -425,12 +432,13 @@ nsInlineFrame::ReflowFrames(nsPresContext* aPresContext,
                    : aReflowState.mComputedBorderPadding.right;
   }
   nscoord availableWidth = aReflowState.availableWidth;
-  NS_ASSERTION(availableWidth != NS_UNCONSTRAINEDSIZE,
-               "should no longer use available widths");
-  // Subtract off left and right border+padding from availableWidth
-  availableWidth -= leftEdge;
-  availableWidth -= ltr ? aReflowState.mComputedBorderPadding.right
-                        : aReflowState.mComputedBorderPadding.left;
+  if (NS_UNCONSTRAINEDSIZE != availableWidth) {
+    // Subtract off left and right border+padding from availableWidth
+    availableWidth -= leftEdge;
+    availableWidth -= ltr ? aReflowState.mComputedBorderPadding.right
+                          : aReflowState.mComputedBorderPadding.left;
+    availableWidth = PR_MAX(0, availableWidth);
+  }
   lineLayout->BeginSpan(this, &aReflowState, leftEdge, leftEdge + availableWidth);
 
   // First reflow our current children
@@ -536,9 +544,11 @@ nsInlineFrame::ReflowFrames(nsPresContext* aPresContext,
   // line-height calculations. However, continuations of an inline
   // that are empty we force to empty so that things like collapsed
   // whitespace in an inline element don't affect the line-height.
-  aMetrics.width = lineLayout->EndSpan(this);
+  nsSize size;
+  lineLayout->EndSpan(this, size);
 
   // Compute final width
+  aMetrics.width = size.width;
   if (nsnull == GetPrevContinuation()) {
     aMetrics.width += ltr ? aReflowState.mComputedBorderPadding.left
                           : aReflowState.mComputedBorderPadding.right;
@@ -565,15 +575,6 @@ nsInlineFrame::ReflowFrames(nsPresContext* aPresContext,
     // affect our height.
     fm->GetMaxAscent(aMetrics.ascent);
     fm->GetHeight(aMetrics.height);
-    // Include the text-decoration lines to the height.
-    // Currently, only underline is overflowable.
-    nscoord offset, size;
-    fm->GetUnderline(offset, size);
-    nscoord ascentAndUnderline =
-      aPresContext->RoundAppUnitsToNearestDevPixels(aMetrics.ascent - offset) +
-      aPresContext->RoundAppUnitsToNearestDevPixels(size);
-    if (ascentAndUnderline > aMetrics.height)
-      aMetrics.height = ascentAndUnderline;
   } else {
     NS_WARNING("Cannot get font metrics - defaulting sizes to 0");
     aMetrics.ascent = aMetrics.height = 0;
@@ -651,7 +652,7 @@ nsInlineFrame::ReflowInlineFrame(nsPresContext* aPresContext,
       }
       nsIFrame* nextFrame = aFrame->GetNextSibling();
       if (nextFrame) {
-        NS_FRAME_SET_INCOMPLETE(aStatus);
+        aStatus |= NS_FRAME_NOT_COMPLETE;
         PushFrames(aPresContext, nextFrame, aFrame);
       }
       else if (nsnull != GetNextInFlow()) {
@@ -660,7 +661,7 @@ nsInlineFrame::ReflowInlineFrame(nsPresContext* aPresContext,
         nsInlineFrame* nextInFlow = (nsInlineFrame*) GetNextInFlow();
         while (nsnull != nextInFlow) {
           if (nextInFlow->mFrames.NotEmpty()) {
-            NS_FRAME_SET_INCOMPLETE(aStatus);
+            aStatus |= NS_FRAME_NOT_COMPLETE;
             break;
           }
           nextInFlow = (nsInlineFrame*) nextInFlow->GetNextInFlow();
@@ -798,11 +799,11 @@ NS_IMETHODIMP nsInlineFrame::GetAccessible(nsIAccessible** aAccessible)
     if (!accService)
       return NS_ERROR_FAILURE;
     if (tagAtom == nsGkAtoms::input)  // Broken <input type=image ... />
-      return accService->CreateHTMLButtonAccessible(static_cast<nsIFrame*>(this), aAccessible);
+      return accService->CreateHTMLButtonAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
     else if (tagAtom == nsGkAtoms::img)  // Create accessible for broken <img>
-      return accService->CreateHTMLImageAccessible(static_cast<nsIFrame*>(this), aAccessible);
+      return accService->CreateHTMLImageAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
     else if (tagAtom == nsGkAtoms::label)  // Creat accessible for <label>
-      return accService->CreateHTMLLabelAccessible(static_cast<nsIFrame*>(this), aAccessible);
+      return accService->CreateHTMLLabelAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
   }
 
   return NS_ERROR_FAILURE;
@@ -1008,7 +1009,7 @@ nsPositionedInlineFrame::SetInitialChildList(nsIAtom*        aListName,
 {
   nsresult  rv;
 
-  if (nsGkAtoms::absoluteList == aListName) {
+  if (mAbsoluteContainer.GetChildListName() == aListName) {
     rv = mAbsoluteContainer.SetInitialChildList(this, aListName, aChildList);
   } else {
     rv = nsInlineFrame::SetInitialChildList(aListName, aChildList);
@@ -1023,7 +1024,7 @@ nsPositionedInlineFrame::AppendFrames(nsIAtom*        aListName,
 {
   nsresult  rv;
   
-  if (nsGkAtoms::absoluteList == aListName) {
+  if (mAbsoluteContainer.GetChildListName() == aListName) {
     rv = mAbsoluteContainer.AppendFrames(this, aListName, aFrameList);
   } else {
     rv = nsInlineFrame::AppendFrames(aListName, aFrameList);
@@ -1039,7 +1040,7 @@ nsPositionedInlineFrame::InsertFrames(nsIAtom*        aListName,
 {
   nsresult  rv;
 
-  if (nsGkAtoms::absoluteList == aListName) {
+  if (mAbsoluteContainer.GetChildListName() == aListName) {
     rv = mAbsoluteContainer.InsertFrames(this, aListName, aPrevFrame,
                                          aFrameList);
   } else {
@@ -1055,7 +1056,7 @@ nsPositionedInlineFrame::RemoveFrame(nsIAtom*        aListName,
 {
   nsresult  rv;
 
-  if (nsGkAtoms::absoluteList == aListName) {
+  if (mAbsoluteContainer.GetChildListName() == aListName) {
     rv = mAbsoluteContainer.RemoveFrame(this, aListName, aOldFrame);
   } else {
     rv = nsInlineFrame::RemoveFrame(aListName, aOldFrame);
@@ -1077,7 +1078,7 @@ nsIAtom*
 nsPositionedInlineFrame::GetAdditionalChildListName(PRInt32 aIndex) const
 {
   if (0 == aIndex) {
-    return nsGkAtoms::absoluteList;
+    return mAbsoluteContainer.GetChildListName();
   }
   return nsnull;
 }
@@ -1085,7 +1086,7 @@ nsPositionedInlineFrame::GetAdditionalChildListName(PRInt32 aIndex) const
 nsIFrame*
 nsPositionedInlineFrame::GetFirstChild(nsIAtom* aListName) const
 {
-  if (nsGkAtoms::absoluteList == aListName) {
+  if (mAbsoluteContainer.GetChildListName() == aListName) {
     nsIFrame* result = nsnull;
     mAbsoluteContainer.FirstChild(this, aListName, &result);
     return result;
@@ -1137,9 +1138,9 @@ nsPositionedInlineFrame::Reflow(nsPresContext*          aPresContext,
     // Don't include this frame's bounds, nor its inline descendants' bounds,
     // and don't store the overflow property.
     // That will all be done by nsLineLayout::RelativePositionFrames.
-    rv = mAbsoluteContainer.Reflow(this, aPresContext, aReflowState, aStatus,
+    rv = mAbsoluteContainer.Reflow(this, aPresContext, aReflowState,
                                    containingBlockWidth, containingBlockHeight,
-                                   PR_TRUE, PR_TRUE, PR_TRUE, // XXX could be optimized
+                                   PR_TRUE, PR_TRUE, // XXX could be optimized
                                    &aDesiredSize.mOverflowArea);
   }
 

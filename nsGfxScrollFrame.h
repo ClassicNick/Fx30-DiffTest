@@ -96,7 +96,6 @@ public:
 
   // nsIReflowCallback
   virtual PRBool ReflowFinished();
-  virtual void ReflowCallbackCanceled();
 
   // nsIScrollPositionListener
 
@@ -126,12 +125,12 @@ public:
     nsGfxScrollFrameInner *mInner;
   };
 
-  static void FinishReflowForScrollbar(nsIContent* aContent, nscoord aMinXY,
+  void FinishReflowForScrollbar(nsIContent* aContent, nscoord aMinXY,
                                        nscoord aMaxXY, nscoord aCurPosXY,
                                        nscoord aPageIncrement,
                                        nscoord aIncrement);
   static void SetScrollbarEnabled(nsIContent* aContent, nscoord aMaxPos);
-  static void SetCoordAttribute(nsIContent* aContent, nsIAtom* aAtom,
+  void SetCoordAttribute(nsIContent* aContent, nsIAtom* aAtom,
                                 nscoord aSize);
   nscoord GetCoordAttribute(nsIBox* aFrame, nsIAtom* atom, nscoord defaultValue);
 
@@ -195,6 +194,7 @@ public:
   nsIFrame* mScrolledFrame;
   nsIBox* mScrollCornerBox;
   nsContainerFrame* mOuter;
+  nscoord mOnePixel;
 
   nsRect mRestoreRect;
   nsPoint mLastPos;
@@ -230,7 +230,6 @@ public:
   PRPackedBool mHorizontalOverflow:1;
   PRPackedBool mVerticalOverflow:1;
   PRPackedBool mPostedReflowCallback:1;
-  PRPackedBool mMayHaveDirtyFixedChildren:1;
 };
 
 /**
@@ -263,10 +262,10 @@ public:
   }
 
   PRBool TryLayout(ScrollReflowState* aState,
-                   nsHTMLReflowMetrics* aKidMetrics,
+                   const nsHTMLReflowMetrics& aKidMetrics,
                    PRBool aAssumeVScroll, PRBool aAssumeHScroll,
-                   PRBool aForce, nsresult* aResult);
-  nsresult ReflowScrolledFrame(ScrollReflowState* aState,
+                   PRBool aForce);
+  nsresult ReflowScrolledFrame(const ScrollReflowState& aState,
                                PRBool aAssumeHScroll,
                                PRBool aAssumeVScroll,
                                nsHTMLReflowMetrics* aMetrics,
@@ -402,13 +401,6 @@ protected:
   // NS_FRAME_FIRST_REFLOW set are NOT "initial" as far as we're concerned.
   PRBool InInitialReflow() const;
   
-  /**
-   * Override this to return false if computed height/min-height/max-height
-   * should NOT be propagated to child content.
-   * nsListControlFrame uses this.
-   */
-  virtual PRBool ShouldPropagateComputedHeightToScrolledContent() const { return PR_TRUE; }
-
 private:
   friend class nsGfxScrollFrameInner;
   nsGfxScrollFrameInner mInner;

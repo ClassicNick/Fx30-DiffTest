@@ -107,21 +107,11 @@ public:
 
   virtual void Destroy();
 
-  NS_IMETHOD DidSetStyleContext();
-
   NS_IMETHOD GetPluginInstance(nsIPluginInstance*& aPluginInstance);
   virtual nsresult Instantiate(nsIChannel* aChannel, nsIStreamListener** aStreamListener);
   virtual nsresult Instantiate(const char* aMimeType, nsIURI* aURI);
-  virtual void TryNotifyContentObjectWrapper();
   virtual void StopPlugin();
 
-  /*
-   * Stop a plugin instance. If aDelayedStop is true, the plugin will
-   * be stopped at a later point when it's safe to do so (i.e. not
-   * while destroying the frame tree). Delayed stopping is only
-   * implemented on Win32 for now.
-   */
-  void StopPluginInternal(PRBool aDelayedStop);
 
   /* fail on any requests to get a cursor from us because plugins set their own! see bug 118877 */
   NS_IMETHOD GetCursor(const nsPoint& aPoint, nsIFrame::Cursor& aCursor) 
@@ -168,11 +158,6 @@ protected:
    */
   void FixupWindow(const nsSize& aSize);
 
-  /**
-   * Sets up the plugin window and calls SetWindow on the plugin.
-   */
-  void CallSetWindow();
-
   PRBool IsFocusable(PRInt32 *aTabIndex = nsnull, PRBool aWithMouse = PR_FALSE);
 
   // check attributes and optionally CSS to see if we should display anything
@@ -193,10 +178,11 @@ private:
   nsPluginInstanceOwner *mInstanceOwner;
   nsRect                mWindowlessRect;
 
+#ifdef DEBUG
   // For assertions that make it easier to determine if a crash is due
-  // to the underlying problem described in bug 136927, and to prevent
-  // reentry into instantiation.
+  // to the underlying problem described in bug 136927.
   PRBool mInstantiating;
+#endif
 };
 
 

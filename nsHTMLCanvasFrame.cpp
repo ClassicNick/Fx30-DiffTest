@@ -76,6 +76,9 @@ nsHTMLCanvasFrame::GetCanvasSize()
     h = w = 1;
   }
 
+  float p2t = PresContext()->PixelsToTwips();
+  return nsSize(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
+
   return nsSize(w, h);
 }
 
@@ -84,7 +87,7 @@ nsHTMLCanvasFrame::GetMinWidth(nsIRenderingContext *aRenderingContext)
 {
   // XXX The caller doesn't account for constraints of the height,
   // min-height, and max-height properties.
-  nscoord result = nsPresContext::CSSPixelsToAppUnits(GetCanvasSize().width);
+  nscoord result = GetCanvasSize().width;
   DISPLAY_MIN_WIDTH(this, result);
   return result;
 }
@@ -94,7 +97,7 @@ nsHTMLCanvasFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
 {
   // XXX The caller doesn't account for constraints of the height,
   // min-height, and max-height properties.
-  nscoord result = nsPresContext::CSSPixelsToAppUnits(GetCanvasSize().width);
+  nscoord result = GetCanvasSize().width;
   DISPLAY_PREF_WIDTH(this, result);
   return result;
 }
@@ -111,18 +114,11 @@ nsHTMLCanvasFrame::ComputeSize(nsIRenderingContext *aRenderingContext,
                                nsSize aMargin, nsSize aBorder, nsSize aPadding,
                                PRBool aShrinkWrap)
 {
-  nsSize size = GetCanvasSize();
-
-  IntrinsicSize intrinsicSize;
-  intrinsicSize.width.SetCoordValue(nsPresContext::CSSPixelsToAppUnits(size.width));
-  intrinsicSize.height.SetCoordValue(nsPresContext::CSSPixelsToAppUnits(size.height));
-
-  nsSize& intrinsicRatio = size; // won't actually be used
+  nsSize canvasSize = GetCanvasSize();
 
   return nsLayoutUtils::ComputeSizeWithIntrinsicDimensions(
-                            aRenderingContext, this,
-                            intrinsicSize, intrinsicRatio, aCBSize,
-                            aMargin, aBorder, aPadding);
+                            aRenderingContext, this, canvasSize,
+                            aCBSize, aMargin, aBorder, aPadding);
 }
 
 NS_IMETHODIMP
@@ -142,7 +138,7 @@ nsHTMLCanvasFrame::Reflow(nsPresContext*           aPresContext,
   aStatus = NS_FRAME_COMPLETE;
 
   aMetrics.width = aReflowState.ComputedWidth();
-  aMetrics.height = aReflowState.ComputedHeight();
+  aMetrics.height = aReflowState.mComputedHeight;
 
   // stash this away so we can compute our inner area later
   mBorderPadding   = aReflowState.mComputedBorderPadding;
@@ -193,26 +189,20 @@ nsHTMLCanvasFrame::PaintCanvas(nsIRenderingContext& aRenderingContext,
   if (!canvas)
     return;
 
-  // anything to do?
-  if (inner.width == 0 || inner.height == 0)
-    return;
-
   nsSize canvasSize = GetCanvasSize();
-  nsSize sizeAppUnits(PresContext()->DevPixelsToAppUnits(canvasSize.width),
-                      PresContext()->DevPixelsToAppUnits(canvasSize.height));
 
   // XXXvlad clip to aDirtyRect!
 
-  if (inner.Size() != sizeAppUnits)
+  if (inner.Size() != canvasSize)
   {
-    float sx = inner.width / (float) sizeAppUnits.width;
-    float sy = inner.height / (float) sizeAppUnits.height;
+    float sx = inner.width / (float) canvasSize.width;
+    float sy = inner.height / (float) canvasSize.height;
 
     aRenderingContext.PushState();
     aRenderingContext.Translate(inner.x, inner.y);
     aRenderingContext.Scale(sx, sy);
 
-    canvas->RenderContexts(aRenderingContext.ThebesContext());
+    canvas->RenderContexts(&aRenderingContext);
 
     aRenderingContext.PopState();
   } else {
@@ -221,7 +211,7 @@ nsHTMLCanvasFrame::PaintCanvas(nsIRenderingContext& aRenderingContext,
     aRenderingContext.PushState();
     aRenderingContext.Translate(inner.x, inner.y);
 
-    canvas->RenderContexts(aRenderingContext.ThebesContext());
+    canvas->RenderContexts(&aRenderingContext);
 
     aRenderingContext.PopState();
   }
@@ -230,7 +220,7 @@ nsHTMLCanvasFrame::PaintCanvas(nsIRenderingContext& aRenderingContext,
 static void PaintCanvas(nsIFrame* aFrame, nsIRenderingContext* aCtx,
                         const nsRect& aDirtyRect, nsPoint aPt)
 {
-  static_cast<nsHTMLCanvasFrame*>(aFrame)->PaintCanvas(*aCtx, aDirtyRect, aPt);
+  NS_STATIC_CAST(nsHTMLCanvasFrame*, aFrame)->PaintCanvas(*aCtx, aDirtyRect, aPt);
 }
 
 NS_IMETHODIMP

@@ -67,7 +67,6 @@
 #include "nsBlockFrame.h"
 #include "nsLineBox.h"
 #include "nsDisplayList.h"
-#include "nsCSSRendering.h"
 
 class nsDisplayTextDecoration : public nsDisplayItem {
 public:
@@ -94,31 +93,37 @@ private:
 
 void
 nsDisplayTextDecoration::Paint(nsDisplayListBuilder* aBuilder,
-                               nsIRenderingContext* aCtx,
-                               const nsRect& aDirtyRect)
-{
-  nsCOMPtr<nsIFontMetrics> fm;
-  nsLayoutUtils::GetFontMetricsForFrame(mFrame, getter_AddRefs(fm));
+    nsIRenderingContext* aCtx, const nsRect& aDirtyRect) {
+  // REVIEW: From nsHTMLContainerFrame::PaintTextDecorationsAndChildren
+  const nsStyleFont* font = mFrame->GetStyleFont();
+  NS_ASSERTION(font->mFont.decorations == NS_FONT_DECORATION_NONE,
+               "fonts on style structs shouldn't have decorations");
 
+  // XXX This is relatively slow and shouldn't need to be used here.
+  nsCOMPtr<nsIDeviceContext> deviceContext;
+  aCtx->GetDeviceContext(*getter_AddRefs(deviceContext));
+  nsCOMPtr<nsIFontMetrics> normalFont;
+  const nsStyleVisibility* visibility = mFrame->GetStyleVisibility();
+  nsCOMPtr<nsIFontMetrics> fm;
+  deviceContext->GetMetricsFor(font->mFont, visibility->mLangGroup,
+      *getter_AddRefs(fm));
+      
   nsPoint pt = aBuilder->ToReferenceFrame(mFrame);
 
   // REVIEW: From nsHTMLContainerFrame::PaintTextDecorations
   nscoord ascent, offset, size;
-  nsHTMLContainerFrame* f = static_cast<nsHTMLContainerFrame*>(mFrame);
+  nsHTMLContainerFrame* f = NS_STATIC_CAST(nsHTMLContainerFrame*, mFrame);
   fm->GetMaxAscent(ascent);
   if (mDecoration != NS_STYLE_TEXT_DECORATION_LINE_THROUGH) {
     fm->GetUnderline(offset, size);
     if (mDecoration == NS_STYLE_TEXT_DECORATION_UNDERLINE) {
-      f->PaintTextDecorationLine(*aCtx, pt, mLine, mColor,
-                                 offset, ascent, size, mDecoration);
+      f->PaintTextDecorationLine(*aCtx, pt, mLine, mColor, offset, ascent, size);
     } else if (mDecoration == NS_STYLE_TEXT_DECORATION_OVERLINE) {
-      f->PaintTextDecorationLine(*aCtx, pt, mLine, mColor,
-                                 ascent, ascent, size, mDecoration);
+      f->PaintTextDecorationLine(*aCtx, pt, mLine, mColor, ascent, ascent, size);
     }
   } else {
     fm->GetStrikeout(offset, size);
-    f->PaintTextDecorationLine(*aCtx, pt, mLine, mColor,
-                               offset, ascent, size, mDecoration);
+    f->PaintTextDecorationLine(*aCtx, pt, mLine, mColor, offset, ascent, size);
   }
 }
 
@@ -198,8 +203,7 @@ nsHTMLContainerFrame::PaintTextDecorationLine(
                    nscolor aColor, 
                    nscoord aOffset, 
                    nscoord aAscent, 
-                   nscoord aSize,
-                   const PRUint8 aDecoration) 
+                   nscoord aSize) 
 {
   NS_ASSERTION(!aLine, "Should not have passed a linebox to a non-block frame");
   nsMargin bp = GetUsedBorderAndPadding();
@@ -209,19 +213,10 @@ nsHTMLContainerFrame::PaintTextDecorationLine(
       bp.side(side) = 0;
     }
   }
-  const nsStyleVisibility* visibility = GetStyleVisibility();
-  PRBool isRTL = visibility->mDirection == NS_STYLE_DIRECTION_RTL;
+  aRenderingContext.SetColor(aColor);
   nscoord innerWidth = mRect.width - bp.left - bp.right;
-  nsRefPtr<gfxContext> ctx = aRenderingContext.ThebesContext();
-  gfxPoint pt(PresContext()->AppUnitsToGfxUnits(bp.left + aPt.x),
-              PresContext()->AppUnitsToGfxUnits(bp.top + aPt.y));
-  gfxSize size(PresContext()->AppUnitsToGfxUnits(innerWidth),
-               PresContext()->AppUnitsToGfxUnits(aSize));
-  nsCSSRendering::PaintDecorationLine(
-    ctx, aColor, pt, size, PresContext()->AppUnitsToGfxUnits(aAscent),
-    PresContext()->AppUnitsToGfxUnits(aOffset),
-    PresContext()->AppUnitsToGfxUnits(aSize),
-    aDecoration, NS_STYLE_BORDER_STYLE_SOLID, isRTL);
+  aRenderingContext.FillRect(bp.left + aPt.x, 
+                             bp.top + aAscent - aOffset + aPt.y, innerWidth, aSize);
 }
 
 void
@@ -260,9 +255,8 @@ nsHTMLContainerFrame::GetTextDecorations(nsPresContext* aPresContext,
 
       nsStyleContext* styleContext = frame->GetStyleContext();
       const nsStyleDisplay* styleDisplay = styleContext->GetStyleDisplay();
-      if (!styleDisplay->IsBlockInside() &&
-          styleDisplay->mDisplay != NS_STYLE_DISPLAY_TABLE_CELL &&
-          styleDisplay->mDisplay != NS_STYLE_DISPLAY_TABLE_CAPTION) {
+      if (!styleDisplay->IsBlockOutside() &&
+          styleDisplay->mDisplay != NS_STYLE_DISPLAY_TABLE_CELL) {
         // If an inline frame is discovered while walking up the tree,
         // we should stop according to CSS3 draft. CSS2 is rather vague
         // about this.

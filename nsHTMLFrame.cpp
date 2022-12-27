@@ -162,16 +162,21 @@ NS_NewCanvasFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMETHODIMP
 CanvasFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
 {
-  NS_PRECONDITION(aInstancePtr, "null out param");
+  NS_PRECONDITION(0 != aInstancePtr, "null ptr");
+  if (NULL == aInstancePtr) {
+    return NS_ERROR_NULL_POINTER;
+  }
 
   if (aIID.Equals(NS_GET_IID(nsIScrollPositionListener))) {
-    *aInstancePtr = static_cast<nsIScrollPositionListener*>(this);
+    *aInstancePtr = (void*) ((nsIScrollPositionListener*) this);
     return NS_OK;
   } 
+  
   if (aIID.Equals(NS_GET_IID(nsICanvasFrame))) {
-    *aInstancePtr = static_cast<nsICanvasFrame*>(this);
+    *aInstancePtr = (void*) ((nsICanvasFrame*) this);
     return NS_OK;
   } 
+  
 
   return nsHTMLContainerFrame::QueryInterface(aIID, aInstancePtr);
 }
@@ -361,14 +366,14 @@ public:
 
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder)
   {
-    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    CanvasFrame* frame = NS_STATIC_CAST(CanvasFrame*, mFrame);
     return frame->CanvasArea() + aBuilder->ToReferenceFrame(mFrame);
   }
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsIRenderingContext* aCtx, const nsRect& aDirtyRect)
   {
-    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    CanvasFrame* frame = NS_STATIC_CAST(CanvasFrame*, mFrame);
     nsPoint offset = aBuilder->ToReferenceFrame(mFrame);
     nsRect bgClipRect = frame->CanvasArea() + offset;
     nsCSSRendering::PaintBackground(mFrame->PresContext(), *aCtx, mFrame,
@@ -398,14 +403,14 @@ public:
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder)
   {
     // This is an overestimate, but that's not a problem.
-    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    CanvasFrame* frame = NS_STATIC_CAST(CanvasFrame*, mFrame);
     return frame->CanvasArea() + aBuilder->ToReferenceFrame(mFrame);
   }
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsIRenderingContext* aCtx, const nsRect& aDirtyRect)
   {
-    CanvasFrame* frame = static_cast<CanvasFrame*>(mFrame);
+    CanvasFrame* frame = NS_STATIC_CAST(CanvasFrame*, mFrame);
     frame->PaintFocus(*aCtx, aBuilder->ToReferenceFrame(mFrame));
   }
 
@@ -502,9 +507,10 @@ CanvasFrame::PaintFocus(nsIRenderingContext& aRenderingContext, nsPoint aPt)
     return;
   }
 
-  // XXX the CSS border for links is specified as 2px, but it
-  // is only drawn as 1px.  Match this here.
-  nscoord onePixel = nsPresContext::CSSPixelsToAppUnits(1);
+  float p2t = PresContext()->PixelsToTwips();
+   // XXX the CSS border for links is specified as 2px, but it
+   // is only drawn as 1px.  Match this here.
+  nscoord onePixel = NSIntPixelsToTwips(1, p2t);
 
   nsRect borderInside(focusRect.x + onePixel,
                       focusRect.y + onePixel,
@@ -571,13 +577,6 @@ CanvasFrame::Reflow(nsPresContext*          aPresContext,
                                      nsSize(aReflowState.availableWidth,
                                             NS_UNCONSTRAINEDSIZE));
 
-    if (aReflowState.mFlags.mVResize &&
-        (kidFrame->GetStateBits() & NS_FRAME_CONTAINS_RELATIVE_HEIGHT)) {
-      // Tell our kid it's being vertically resized too.  Bit of a
-      // hack for framesets.
-      kidReflowState.mFlags.mVResize = PR_TRUE;
-    }
-    
     // Reflow the frame
     ReflowChild(kidFrame, aPresContext, kidDesiredSize, kidReflowState,
                 kidReflowState.mComputedMargin.left, kidReflowState.mComputedMargin.top,
@@ -599,8 +598,7 @@ CanvasFrame::Reflow(nsPresContext*          aPresContext,
       // (0, 0). We only want to invalidate GetRect() since GetOverflowRect()
       // could also include overflow to our top and left (out of the viewport)
       // which doesn't need to be painted.
-      nsIFrame* viewport = PresContext()->GetPresShell()->GetRootFrame();
-      viewport->Invalidate(nsRect(nsPoint(0, 0), viewport->GetSize()));
+      Invalidate(GetRect(), PR_FALSE);
     }
 
     // Return our desired size (which doesn't matter)

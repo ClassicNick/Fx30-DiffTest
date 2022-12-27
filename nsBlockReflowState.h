@@ -46,7 +46,6 @@
 #include "nsBlockBandData.h"
 #include "nsLineBox.h"
 #include "nsFrameList.h"
-#include "nsContainerFrame.h"
 
 class nsBlockFrame;
 
@@ -60,8 +59,7 @@ class nsBlockFrame;
 #define BRS_HAVELINEADJACENTTOTOP 0x00000020
 // Set when the block has the equivalent of NS_BLOCK_SPACE_MGR
 #define BRS_SPACE_MGR             0x00000040
-#define BRS_ISOVERFLOWCONTAINER   0x00000100
-#define BRS_LASTFLAG              BRS_ISOVERFLOWCONTAINER
+#define BRS_LASTFLAG              BRS_SPACE_MGR
 
 class nsBlockReflowState {
 public:
@@ -109,9 +107,8 @@ public:
   PRBool PlaceBelowCurrentLineFloats(nsFloatCacheFreeList& aFloats, PRBool aForceFit);
 
   // Returns the first coordinate >= aY that clears the
-  // floats indicated by aBreakType and has enough width between floats
-  // (or no floats remaining) to accomodate aReplacedWidth.
-  nscoord ClearFloats(nscoord aY, PRUint8 aBreakType, nscoord aReplacedWidth = 0);
+  // indicated floats.
+  nscoord ClearFloats(nscoord aY, PRUint8 aBreakType);
 
   PRBool IsAdjacentWithTop() const {
     return mY ==
@@ -120,15 +117,12 @@ public:
 
   /**
    * Adjusts the border/padding to return 0 for the top if
-   * we are not the first in flow.
+   * we are no the first in flow.
    */
   nsMargin BorderPadding() const {
     nsMargin result = mReflowState.mComputedBorderPadding;
     if (!(mFlags & BRS_ISFIRSTINFLOW)) {
       result.top = 0;
-      if (mFlags & BRS_ISOVERFLOWCONTAINER) {
-        result.bottom = 0;
-      }
     }
     return result;
   }
@@ -201,9 +195,6 @@ public:
   // to the overflow-out-of-flow list when the placeholders are appended to
   // the overflow lines.
   nsFrameList mOverflowPlaceholders;
-
-  // Track child overflow continuations.
-  nsOverflowContinuationTracker mOverflowTracker;
 
   //----------------------------------------
 
@@ -287,7 +278,9 @@ public:
   PRBool GetFlag(PRUint32 aFlag) const
   {
     NS_ASSERTION(aFlag<=BRS_LASTFLAG, "bad flag");
-    return !!(mFlags & aFlag);
+    PRBool result = (mFlags & aFlag);
+    if (result) return PR_TRUE;
+    return PR_FALSE;
   }
 };
 

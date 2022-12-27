@@ -103,7 +103,7 @@ nsBulletFrame::Destroy()
   }
 
   if (mListener)
-    reinterpret_cast<nsBulletListener*>(mListener.get())->SetFrame(nsnull);
+    NS_REINTERPRET_CAST(nsBulletListener*, mListener.get())->SetFrame(nsnull);
 
   // Let base class do the rest
   nsFrame::Destroy();
@@ -185,8 +185,7 @@ public:
   }
 #endif
 
-  virtual nsIFrame* HitTest(nsDisplayListBuilder* aBuilder, nsPoint aPt,
-                            HitTestState* aState) { return mFrame; }
+  virtual nsIFrame* HitTest(nsDisplayListBuilder* aBuilder, nsPoint aPt) { return mFrame; }
   virtual void Paint(nsDisplayListBuilder* aBuilder, nsIRenderingContext* aCtx,
      const nsRect& aDirtyRect);
   NS_DISPLAY_DECL_NAME("Bullet")
@@ -195,7 +194,7 @@ public:
 void nsDisplayBullet::Paint(nsDisplayListBuilder* aBuilder,
      nsIRenderingContext* aCtx, const nsRect& aDirtyRect)
 {
-  static_cast<nsBulletFrame*>(mFrame)->
+  NS_STATIC_CAST(nsBulletFrame*, mFrame)->
     PaintBullet(*aCtx, aBuilder->ToReferenceFrame(mFrame), aDirtyRect);
 }
 
@@ -230,13 +229,14 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
         nsRect dest(mPadding.left, mPadding.top,
                     mRect.width - (mPadding.left + mPadding.right),
                     mRect.height - (mPadding.top + mPadding.bottom));
-        nsLayoutUtils::DrawImage(&aRenderingContext, imageCon,
+        aRenderingContext.DrawImage(imageCon,
                                  dest + aPt, aDirtyRect);
         return;
       }
     }
   }
 
+  const nsStyleFont* myFont = GetStyleFont();
   const nsStyleColor* myColor = GetStyleColor();
 
   nsCOMPtr<nsIFontMetrics> fm;
@@ -291,7 +291,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
 
   case NS_STYLE_LIST_STYLE_HEBREW:
     aRenderingContext.GetHints(hints);
-    isBidiSystem = !!(hints & NS_RENDERING_HINT_BIDI_REORDERING);
+    isBidiSystem = (hints & NS_RENDERING_HINT_BIDI_REORDERING);
     if (!isBidiSystem) {
       if (GetListItemText(*myList, text)) {
          charType = eCharType_RightToLeft;
@@ -361,7 +361,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
   case NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_AM:
   case NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_TI_ER:
   case NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_TI_ET:
-    nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm));
+    fm = PresContext()->GetMetricsFor(myFont->mFont);
 #ifdef IBMBIDI
     // If we can't render our numeral using the chars in the numbering
     // system, we'll be using "decimal"...
@@ -383,7 +383,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
 #ifdef IBMBIDI
   if (charType != eCharType_LeftToRight) {
     nsPresContext* presContext = PresContext();
-    nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm));
+    fm = presContext->GetMetricsFor(myFont->mFont);
     aRenderingContext.SetFont(fm);
     nscoord ascent;
     fm->GetMaxAscent(ascent);
@@ -402,7 +402,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
       else {
 //Mohamed
         aRenderingContext.GetHints(hints);
-        isBidiSystem = !!(hints & NS_RENDERING_HINT_ARABIC_SHAPING);
+        isBidiSystem = (hints & NS_RENDERING_HINT_ARABIC_SHAPING);
         bidiUtils->FormatUnicodeText(presContext, (PRUnichar*)buffer, textLength,
                                      charType, level, isBidiSystem, isNewTextRunSystem);//Mohamed
       }
@@ -1460,9 +1460,11 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
   // match the image size).
   mIntrinsicSize.SizeTo(0, 0);
 
-  nsCOMPtr<nsIFontMetrics> fm;
-  nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm));
+  const nsStyleFont* myFont = GetStyleFont();
+  nsCOMPtr<nsIFontMetrics> fm = aCX->GetMetricsFor(myFont->mFont);
   nscoord bulletSize;
+  float p2t;
+  float t2p;
 
   nsAutoString text;
   switch (myList->mListStyleType) {
@@ -1474,10 +1476,16 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
     case NS_STYLE_LIST_STYLE_DISC:
     case NS_STYLE_LIST_STYLE_CIRCLE:
     case NS_STYLE_LIST_STYLE_SQUARE:
-      fm->GetMaxAscent(ascent);
-      bulletSize = PR_MAX(nsPresContext::CSSPixelsToAppUnits(MIN_BULLET_SIZE),
-                          NSToCoordRound(0.8f * (float(ascent) / 2.0f)));
-      mPadding.bottom = NSToCoordRound(float(ascent) / 8.0f);
+      t2p = aCX->TwipsToPixels();
+       fm->GetMaxAscent(ascent);
+      bulletSize = NSTwipsToIntPixels(
+        (nscoord)NSToIntRound(0.8f * (float(ascent) / 2.0f)), t2p);
+      if (bulletSize < MIN_BULLET_SIZE) {
+        bulletSize = MIN_BULLET_SIZE;
+      }
+      p2t = aCX->PixelsToTwips();
+      bulletSize = NSIntPixelsToTwips(bulletSize, p2t);
+      mPadding.bottom = NSIntPixelsToTwips((nscoord) NSToIntRound((float)ascent / (8.0f * p2t)),p2t);
       aMetrics.width = mPadding.right + bulletSize;
       aMetrics.ascent = aMetrics.height = mPadding.bottom + bulletSize;
       break;
@@ -1563,12 +1571,6 @@ nsBulletFrame::Reflow(nsPresContext* aPresContext,
   aMetrics.height += borderPadding.top + borderPadding.bottom;
   aMetrics.ascent += borderPadding.top;
 
-  // XXX this is a bit of a hack, we're assuming that no glyphs used for bullets
-  // overflow their font-boxes. It'll do for now; to fix it for real, we really
-  // should rewrite all the text-handling code here to use gfxTextRun (bug
-  // 397294).
-  aMetrics.mOverflowArea.SetRect(0, 0, aMetrics.width, aMetrics.height);
-  
   aStatus = NS_FRAME_COMPLETE;
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aMetrics);
   return NS_OK;
@@ -1609,10 +1611,11 @@ NS_IMETHODIMP nsBulletFrame::OnStartContainer(imgIRequest *aRequest,
   aImage->GetWidth(&w);
   aImage->GetHeight(&h);
 
-  nsPresContext* presContext = PresContext();
-
-  nsSize newsize(nsPresContext::CSSPixelsToAppUnits(w),
-                 nsPresContext::CSSPixelsToAppUnits(h));
+  float p2t;
+   nsPresContext* presContext = PresContext();
+  p2t = presContext->PixelsToTwips();
+ 
+  nsSize newsize(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
 
   if (mIntrinsicSize != newsize) {
     mIntrinsicSize = newsize;
