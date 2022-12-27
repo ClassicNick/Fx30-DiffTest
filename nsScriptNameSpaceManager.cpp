@@ -68,14 +68,6 @@ public:
 };
 
 
-PR_STATIC_CALLBACK(const void *)
-GlobalNameHashGetKey(PLDHashTable *table, PLDHashEntryHdr *entry)
-{
-  GlobalNameMapEntry *e = NS_STATIC_CAST(GlobalNameMapEntry *, entry);
-
-  return NS_STATIC_CAST(const nsAString *, &e->mKey);
-}
-
 PR_STATIC_CALLBACK(PLDHashNumber)
 GlobalNameHashHashKey(PLDHashTable *table, const void *key)
 {
@@ -190,7 +182,8 @@ nsScriptNameSpaceManager::GetConstructorProto(const nsGlobalNameStruct* aStruct)
 nsresult
 nsScriptNameSpaceManager::FillHash(nsICategoryManager *aCategoryManager,
                                    const char *aCategory,
-                                   nsGlobalNameStruct::nametype aType)
+                                   nsGlobalNameStruct::nametype aType,
+                                   PRBool aPrivilegedOnly)
 {
   nsCOMPtr<nsIComponentRegistrar> registrar;
   nsresult rv = NS_GetComponentRegistrar(getter_AddRefs(registrar));
@@ -254,6 +247,7 @@ nsScriptNameSpaceManager::FillHash(nsICategoryManager *aCategoryManager,
             return NS_ERROR_OUT_OF_MEMORY;
           }
           s->mType = nsGlobalNameStruct::eTypeExternalConstructorAlias;
+          s->mPrivilegedOnly = PR_FALSE;
           s->mAlias->mCID = cid;
           AppendASCIItoUTF16(constructorProto, s->mAlias->mProtoName);
           s->mAlias->mProto = nsnull;
@@ -271,6 +265,7 @@ nsScriptNameSpaceManager::FillHash(nsICategoryManager *aCategoryManager,
     if (s->mType == nsGlobalNameStruct::eTypeNotInitialized) {
       s->mType = aType;
       s->mCID = cid;
+      s->mPrivilegedOnly = aPrivilegedOnly;
     } else {
       NS_WARNING("Global script name not overwritten!");
     }
@@ -461,7 +456,6 @@ nsScriptNameSpaceManager::Init()
   {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    GlobalNameHashGetKey,
     GlobalNameHashHashKey,
     GlobalNameHashMatchEntry,
     PL_DHashMoveEntryStub,
@@ -484,19 +478,23 @@ nsScriptNameSpaceManager::Init()
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = FillHash(cm, JAVASCRIPT_GLOBAL_CONSTRUCTOR_CATEGORY,
-                nsGlobalNameStruct::eTypeExternalConstructor);
+                nsGlobalNameStruct::eTypeExternalConstructor, PR_FALSE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = FillHash(cm, JAVASCRIPT_GLOBAL_PROPERTY_CATEGORY,
-                nsGlobalNameStruct::eTypeProperty);
+                nsGlobalNameStruct::eTypeProperty, PR_FALSE);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = FillHash(cm, JAVASCRIPT_GLOBAL_PRIVILEGED_PROPERTY_CATEGORY,
+                nsGlobalNameStruct::eTypeProperty, PR_TRUE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = FillHash(cm, JAVASCRIPT_GLOBAL_STATIC_NAMESET_CATEGORY,
-                nsGlobalNameStruct::eTypeStaticNameSet);
+                nsGlobalNameStruct::eTypeStaticNameSet, PR_FALSE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = FillHash(cm, JAVASCRIPT_GLOBAL_DYNAMIC_NAMESET_CATEGORY,
-                nsGlobalNameStruct::eTypeDynamicNameSet);
+                nsGlobalNameStruct::eTypeDynamicNameSet, PR_FALSE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;

@@ -63,7 +63,7 @@
 #include "nsDOMException.h"
 #include "nsCRT.h"
 #ifdef MOZ_XUL
-#include "nsIXULPrototypeCache.h"
+#include "nsXULPrototypeCache.h"
 #endif
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID, NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
@@ -220,7 +220,7 @@ nsDOMScriptObjectFactory::NewScriptGlobalObject(PRBool aIsChrome,
 NS_IMETHODIMP_(nsISupports *)
 nsDOMScriptObjectFactory::GetClassInfoInstance(nsDOMClassInfoID aID)
 {
-  return nsDOMClassInfo::GetClassInfoInstance(aID);
+  return NS_GetDOMClassInfoInstance(aID);
 }
 
 NS_IMETHODIMP_(nsISupports *)
@@ -263,8 +263,7 @@ nsDOMScriptObjectFactory::Observe(nsISupports *aSubject,
 #ifdef MOZ_XUL
     // Flush the XUL cache since it holds JS roots, and we're about to
     // start the final GC.
-    nsCOMPtr<nsIXULPrototypeCache> cache =
-      do_GetService("@mozilla.org/xul/xul-prototype-cache;1");
+    nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
 
     if (cache)
       cache->Flush();
@@ -317,13 +316,18 @@ static nsresult
 CreateXPConnectException(nsresult aResult, nsIException *aDefaultException,
                          nsIException **_retval)
 {
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIXPCException> exception(
-      do_CreateInstance("@mozilla.org/js/xpc/Exception;1", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  // See whether we already have a useful XPConnect exception.  If we
+  // do, let's not create one with _less_ information!
+  nsCOMPtr<nsIXPCException> exception(do_QueryInterface(aDefaultException));
+  if (!exception) {
+    nsresult rv = NS_OK;
+    exception = do_CreateInstance("@mozilla.org/js/xpc/Exception;1", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = exception->Initialize(nsnull, aResult, nsnull, nsnull, nsnull, nsnull);
-  NS_ENSURE_SUCCESS(rv, rv);
+    rv = exception->Initialize(nsnull, aResult, nsnull, nsnull, nsnull,
+                               nsnull);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   NS_ADDREF(*_retval = exception);
   return NS_OK;

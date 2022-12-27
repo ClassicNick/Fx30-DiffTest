@@ -119,7 +119,6 @@ public:
   // GetClassInfoA so I can't, those $%#@^! bastards!!! What gives
   // them the right to do that?
 
-  static nsIClassInfo* GetClassInfoInstance(nsDOMClassInfoID aID);
   static nsIClassInfo* GetClassInfoInstance(nsDOMClassInfoData* aData);
 
   static void ShutDown();
@@ -176,6 +175,8 @@ public:
   static nsresult PreserveNodeWrapper(nsIXPConnectWrappedNative *aWrapper);
 
 protected:
+  friend nsIClassInfo* NS_GetDOMClassInfoInstance(nsDOMClassInfoID aID);
+
   const nsDOMClassInfoData* mData;
 
   static nsresult Init();
@@ -279,6 +280,8 @@ protected:
   static jsval sOnmousemove_id;
   static jsval sOnfocus_id;
   static jsval sOnblur_id;
+  static jsval sOnonline_id;
+  static jsval sOnoffline_id;
   static jsval sOnsubmit_id;
   static jsval sOnreset_id;
   static jsval sOnchange_id;
@@ -1394,6 +1397,31 @@ public:
   }
 };
 
+// TextRectangleList helper
+
+class nsTextRectangleListSH : public nsArraySH
+{
+protected:
+  nsTextRectangleListSH(nsDOMClassInfoData* aData) : nsArraySH(aData)
+  {
+  }
+
+  virtual ~nsTextRectangleListSH()
+  {
+  }
+
+  // Override nsArraySH::GetItemAt() since our list isn't a
+  // nsIDOMNodeList
+  virtual nsresult GetItemAt(nsISupports *aNative, PRUint32 aIndex,
+                             nsISupports **aResult);
+
+public:
+  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
+  {
+    return new nsTextRectangleListSH(aData);
+  }
+};
+
 
 #ifdef MOZ_XUL
 // TreeColumns helper
@@ -1516,11 +1544,11 @@ protected:
   {
   }
 
-  virtual ~nsDOMConstructorSH()
-  {
-  }
-
 public:
+  NS_IMETHOD Call(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
+                  JSObject *obj, PRUint32 argc, jsval *argv, jsval *vp,
+                  PRBool *_retval);
+
   NS_IMETHOD Construct(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                        JSObject *obj, PRUint32 argc, jsval *argv,
                        jsval *vp, PRBool *_retval);
@@ -1576,21 +1604,30 @@ public:
   }
 };
 
+class nsOfflineResourceListSH : public nsStringArraySH
+{
+protected:
+  nsOfflineResourceListSH(nsDOMClassInfoData* aData) : nsStringArraySH(aData)
+  {
+  }
+
+  virtual ~nsOfflineResourceListSH()
+  {
+  }
+
+  virtual nsresult GetStringAt(nsISupports *aNative, PRInt32 aIndex,
+                               nsAString& aResult);
+
+public:
+  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
+  {
+    return new nsOfflineResourceListSH(aData);
+  }
+};
+
+
+
 void InvalidateContextAndWrapperCache();
 
-
-/**
- * nsIClassInfo helper macros
- */
-
-#define NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(_class)                          \
-  if (aIID.Equals(NS_GET_IID(nsIClassInfo))) {                                \
-    foundInterface =                                                          \
-      nsDOMClassInfo::GetClassInfoInstance(eDOMClassInfo_##_class##_id);      \
-    if (!foundInterface) {                                                    \
-      *aInstancePtr = nsnull;                                                 \
-      return NS_ERROR_OUT_OF_MEMORY;                                          \
-    }                                                                         \
-  } else
 
 #endif /* nsDOMClassInfo_h___ */

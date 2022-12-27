@@ -67,10 +67,10 @@ nsWindowRoot::nsWindowRoot(nsIDOMWindow* aWindow)
   nsFocusController::Create(getter_AddRefs(mFocusController));
 
   nsCOMPtr<nsIDOMFocusListener> focusListener(do_QueryInterface(mFocusController));
-  mRefCnt.incr(NS_STATIC_CAST(nsIDOMEventReceiver*, this));
+  mRefCnt.incr(NS_STATIC_CAST(nsIDOMEventTarget*, this));
   AddEventListener(NS_LITERAL_STRING("focus"), focusListener, PR_TRUE);
   AddEventListener(NS_LITERAL_STRING("blur"), focusListener, PR_TRUE);
-  mRefCnt.decr(NS_STATIC_CAST(nsIDOMEventReceiver*, this));
+  mRefCnt.decr(NS_STATIC_CAST(nsIDOMEventTarget*, this));
 }
 
 nsWindowRoot::~nsWindowRoot()
@@ -80,22 +80,19 @@ nsWindowRoot::~nsWindowRoot()
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_2_AMBIGUOUS(nsWindowRoot, nsIDOMEventReceiver, 
-                                     mListenerManager, mFocusController)
+NS_IMPL_CYCLE_COLLECTION_2(nsWindowRoot, mListenerManager, mFocusController)
 
-NS_INTERFACE_MAP_BEGIN(nsWindowRoot)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventReceiver)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventReceiver)
-  NS_INTERFACE_MAP_ENTRY(nsIChromeEventHandler)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsWindowRoot)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventTarget)
+  NS_INTERFACE_MAP_ENTRY(nsPIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsPIWindowRoot)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSEventTarget)
-  NS_INTERFACE_MAP_ENTRY_CYCLE_COLLECTION(nsWindowRoot)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsWindowRoot, nsIDOMEventReceiver)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsWindowRoot, nsIDOMEventReceiver)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsWindowRoot, nsIDOMEventTarget)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsWindowRoot, nsIDOMEventTarget)
 
 NS_IMETHODIMP
 nsWindowRoot::AddEventListener(const nsAString& aType, nsIDOMEventListener* aListener, PRBool aUseCapture)
@@ -114,9 +111,20 @@ nsWindowRoot::DispatchEvent(nsIDOMEvent* aEvt, PRBool *_retval)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv =  nsEventDispatcher::DispatchDOMEvent(
-    NS_STATIC_CAST(nsIChromeEventHandler*, this), nsnull, aEvt, nsnull, &status);
+    NS_STATIC_CAST(nsPIDOMEventTarget*, this), nsnull, aEvt, nsnull, &status);
   *_retval = (status != nsEventStatus_eConsumeNoDefault);
   return rv;
+}
+
+nsresult
+nsWindowRoot::DispatchDOMEvent(nsEvent* aEvent,
+                               nsIDOMEvent* aDOMEvent,
+                               nsPresContext* aPresContext,
+                               nsEventStatus* aEventStatus)
+{
+  return nsEventDispatcher::DispatchDOMEvent(NS_STATIC_CAST(nsPIDOMEventTarget*, this),
+                                             aEvent, aDOMEvent,
+                                             aPresContext, aEventStatus);
 }
 
 NS_IMETHODIMP
@@ -175,7 +183,7 @@ nsWindowRoot::AddEventListener(const nsAString& aType,
   return manager->AddEventListenerByType(aListener, aType, flags, nsnull);
 }
 
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::AddEventListenerByIID(nsIDOMEventListener *aListener, const nsIID& aIID)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
@@ -187,7 +195,7 @@ nsWindowRoot::AddEventListenerByIID(nsIDOMEventListener *aListener, const nsIID&
   return NS_ERROR_FAILURE;
 }
   
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::RemoveEventListenerByIID(nsIDOMEventListener *aListener, const nsIID& aIID)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
@@ -199,7 +207,7 @@ nsWindowRoot::RemoveEventListenerByIID(nsIDOMEventListener *aListener, const nsI
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::GetListenerManager(PRBool aCreateIfNotFound,
                                  nsIEventListenerManager** aResult)
 {
@@ -212,7 +220,7 @@ nsWindowRoot::GetListenerManager(PRBool aCreateIfNotFound,
     mListenerManager = do_CreateInstance(kEventListenerManagerCID, &rv);
     if (NS_FAILED(rv)) return rv;
     mListenerManager->SetListenerTarget(
-      NS_STATIC_CAST(nsIDOMEventReceiver*, this));
+      NS_STATIC_CAST(nsPIDOMEventTarget*, this));
   }
 
   *aResult = mListenerManager;
@@ -220,14 +228,7 @@ nsWindowRoot::GetListenerManager(PRBool aCreateIfNotFound,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWindowRoot::HandleEvent(nsIDOMEvent *aEvent)
-{
-  PRBool defaultActionEnabled;
-  return DispatchEvent(aEvent, &defaultActionEnabled);
-}
-
-NS_IMETHODIMP
+nsresult
 nsWindowRoot::GetSystemEventGroup(nsIDOMEventGroup **aGroup)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
@@ -239,8 +240,8 @@ nsWindowRoot::GetSystemEventGroup(nsIDOMEventGroup **aGroup)
 }
 
 
-NS_IMETHODIMP
-nsWindowRoot::PreHandleChromeEvent(nsEventChainPreVisitor& aVisitor)
+nsresult
+nsWindowRoot::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = PR_TRUE;
   aVisitor.mForceContentDispatch = PR_TRUE; //FIXME! Bug 329119
@@ -249,8 +250,8 @@ nsWindowRoot::PreHandleChromeEvent(nsEventChainPreVisitor& aVisitor)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWindowRoot::PostHandleChromeEvent(nsEventChainPostVisitor& aVisitor)
+nsresult
+nsWindowRoot::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
 {
   return NS_OK;
 }
@@ -280,7 +281,7 @@ nsWindowRoot::SetScriptTypeID(PRUint32 aScriptType)
 ///////////////////////////////////////////////////////////////////////////////////
 
 nsresult
-NS_NewWindowRoot(nsIDOMWindow* aWindow, nsIChromeEventHandler** aResult)
+NS_NewWindowRoot(nsIDOMWindow* aWindow, nsPIDOMEventTarget** aResult)
 {
   *aResult = new nsWindowRoot(aWindow);
   if (!*aResult)

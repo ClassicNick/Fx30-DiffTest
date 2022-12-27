@@ -85,8 +85,27 @@ nsFocusController::~nsFocusController(void)
 {
 }
 
-NS_IMPL_ISUPPORTS4(nsFocusController, nsIFocusController, nsIDOMFocusListener,
-                   nsIDOMEventListener, nsSupportsWeakReference)
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsFocusController)
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsFocusController, nsIFocusController)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsFocusController,
+                                           nsIFocusController)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsFocusController)
+  NS_INTERFACE_MAP_ENTRY(nsIFocusController)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMFocusListener)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
+  NS_INTERFACE_MAP_ENTRY(nsSupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIFocusController)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsFocusController)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFocusController)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentElement)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentWindow)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPopupNode)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPopupEvent)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMETHODIMP
 nsFocusController::Create(nsIFocusController** aResult)
@@ -212,7 +231,7 @@ nsFocusController::UpdateCommands()
   }
 
   // If there is no presshell, it's a zombie document which can't handle the command updates
-  if (window && doc && doc->GetNumberOfShells()) {
+  if (window && doc && doc->GetPrimaryShell()) {
     // Not a zombie document, so we can handle the command update
     window->UpdateCommands(NS_LITERAL_STRING("focus"));
     mNeedUpdateCommands = PR_FALSE;
@@ -278,19 +297,14 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
     }
   }
 
-  if (!doc)
+  if (!doc) {
     // No way to obtain an event state manager.  Give up.
-    return NS_OK;
+    return NS_ERROR_FAILURE;
+  }
 
-
-  // Obtain a presentation context
-  PRInt32 count = doc->GetNumberOfShells();
-  if (count == 0)
-    return NS_OK;
-
-  nsIPresShell *shell = doc->GetShellAt(0);
+  nsIPresShell *shell = doc->GetPrimaryShell();
   if (!shell)
-    return NS_OK;
+    return NS_ERROR_FAILURE;
 
   // Make sure frames have been constructed before shifting focus, bug 273092.
   shell->FlushPendingNotifications(Flush_Frames);
@@ -299,9 +313,7 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
   nsCOMPtr<nsPresContext> presContext = shell->GetPresContext();
 
   // Make this ESM shift the focus per our instructions.
-  presContext->EventStateManager()->ShiftFocus(aForward, content);
-
-  return NS_OK;
+  return presContext->EventStateManager()->ShiftFocus(aForward, content);
 }
 
 /////

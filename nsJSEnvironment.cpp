@@ -38,7 +38,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsJSEnvironment.h"
-#include "nsIScriptContextOwner.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIDOMChromeWindow.h"
@@ -287,9 +286,9 @@ NS_ScriptErrorReporter(JSContext *cx,
   ::JS_ClearPendingException(cx);
 
   if (context) {
-    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(context->GetGlobalObject()));
+    nsIScriptGlobalObject *globalObject = context->GetGlobalObject();
 
-    if (win) {
+    if (globalObject) {
       nsAutoString fileName, msg;
 
       if (report) {
@@ -314,31 +313,37 @@ NS_ScriptErrorReporter(JSContext *cx,
        * then we'd need to generate a new OOM event for that
        * new OOM instance -- this isn't pretty.
        */
-      nsIDocShell *docShell = win->GetDocShell();
-      if (docShell &&
-          (!report ||
-           (report->errorNumber != JSMSG_OUT_OF_MEMORY &&
-            !JSREPORT_IS_WARNING(report->flags)))) {
-        static PRInt32 errorDepth; // Recursion prevention
-        ++errorDepth;
+      {
+        // Scope to make sure we're not using |win| in the rest of
+        // this function when we should be using |globalObject|.  We
+        // only need |win| for the event dispatch.
+        nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(globalObject));
+        nsIDocShell *docShell = win ? win->GetDocShell() : nsnull;
+        if (docShell &&
+            (!report ||
+             (report->errorNumber != JSMSG_OUT_OF_MEMORY &&
+              !JSREPORT_IS_WARNING(report->flags)))) {
+          static PRInt32 errorDepth; // Recursion prevention
+          ++errorDepth;
 
-        nsCOMPtr<nsPresContext> presContext;
-        docShell->GetPresContext(getter_AddRefs(presContext));
+          nsCOMPtr<nsPresContext> presContext;
+          docShell->GetPresContext(getter_AddRefs(presContext));
 
-        if (presContext && errorDepth < 2) {
-          nsScriptErrorEvent errorevent(PR_TRUE, NS_LOAD_ERROR);
+          if (presContext && errorDepth < 2) {
+            nsScriptErrorEvent errorevent(PR_TRUE, NS_LOAD_ERROR);
 
-          errorevent.fileName = fileName.get();
-          errorevent.errorMsg = msg.get();
-          errorevent.lineNr = report ? report->lineno : 0;
+            errorevent.fileName = fileName.get();
+            errorevent.errorMsg = msg.get();
+            errorevent.lineNr = report ? report->lineno : 0;
 
-          // Dispatch() must be synchronous for the recursion block
-          // (errorDepth) to work.
-          nsEventDispatcher::Dispatch(win, presContext, &errorevent, nsnull,
-                                      &status);
+            // Dispatch() must be synchronous for the recursion block
+            // (errorDepth) to work.
+            nsEventDispatcher::Dispatch(win, presContext, &errorevent, nsnull,
+                                        &status);
+          }
+
+          --errorDepth;
         }
-
-        --errorDepth;
       }
 
       if (status != nsEventStatus_eConsumeNoDefault) {
@@ -352,7 +357,7 @@ NS_ScriptErrorReporter(JSContext *cx,
 
           // Set category to chrome or content
           nsCOMPtr<nsIScriptObjectPrincipal> scriptPrincipal =
-            do_QueryInterface(win);
+            do_QueryInterface(globalObject);
           NS_ASSERTION(scriptPrincipal, "Global objects must implement "
                        "nsIScriptObjectPrincipal");
           nsCOMPtr<nsIPrincipal> systemPrincipal;
@@ -881,6 +886,7 @@ nsJSContext::DOMBranchCallback(JSContext *cx, JSScript *script)
 static const char js_options_dot_str[]   = JS_OPTIONS_DOT_STR;
 static const char js_strict_option_str[] = JS_OPTIONS_DOT_STR "strict";
 static const char js_werror_option_str[] = JS_OPTIONS_DOT_STR "werror";
+static const char js_relimit_option_str[] = JS_OPTIONS_DOT_STR "relimit";
 
 int PR_CALLBACK
 nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
@@ -901,6 +907,12 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
   else
     newDefaultJSOptions &= ~JSOPTION_WERROR;
 
+  PRBool relimit = nsContentUtils::GetBoolPref(js_relimit_option_str);
+  if (relimit)
+    newDefaultJSOptions |= JSOPTION_RELIMIT;
+  else
+    newDefaultJSOptions &= ~JSOPTION_RELIMIT;
+
   if (newDefaultJSOptions != oldDefaultJSOptions) {
     // Set options only if we used the old defaults; otherwise the page has
     // customized some via the options object and we defer to its wisdom.
@@ -920,6 +932,7 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
 
   mDefaultJSOptions = JSOPTION_PRIVATE_IS_NSISUPPORTS
                     | JSOPTION_NATIVE_BRANCH_CALLBACK
+                    | JSOPTION_ANONFUNFIX
 #ifdef DEBUG
                     | JSOPTION_STRICT   // lint catching for development
 #endif
@@ -937,7 +950,7 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
     // Make sure the new context gets the default context options
     ::JS_SetOptions(mContext, mDefaultJSOptions);
 
-    // Check for the JS strict option, which enables extra error checks
+    // Watch for the JS boolean options
     nsContentUtils::RegisterPrefCallback(js_options_dot_str,
                                          JSOptionChangedCallback,
                                          this);
@@ -957,7 +970,6 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime) : mGCOnDestruction(PR_TRUE)
   }
   mIsInitialized = PR_FALSE;
   mNumEvaluations = 0;
-  mOwner = nsnull;
   mTerminations = nsnull;
   mScriptsEnabled = PR_TRUE;
   mBranchCallbackCount = 0;
@@ -1014,8 +1026,46 @@ nsJSContext::~nsJSContext()
   }
 }
 
+struct ContextCallbackItem : public JSTracer
+{
+  nsCycleCollectionTraversalCallback *cb;
+};
+
+void
+NoteContextChild(JSTracer *trc, void *thing, uint32 kind)
+{
+  if (kind == JSTRACE_ATOM) {
+    JSAtom *atom = (JSAtom *)thing;
+    jsval v = ATOM_KEY(atom);
+    if (!JSVAL_IS_PRIMITIVE(v)) {
+      thing = JSVAL_TO_GCTHING(v);
+      kind = JSTRACE_OBJECT;
+    }
+  }
+
+  if (kind == JSTRACE_OBJECT || kind == JSTRACE_NAMESPACE ||
+      kind == JSTRACE_QNAME || kind == JSTRACE_XML) {
+    ContextCallbackItem *item = NS_STATIC_CAST(ContextCallbackItem*, trc);
+    item->cb->NoteScriptChild(JAVASCRIPT, thing);
+  }
+}
+
 // QueryInterface implementation for nsJSContext
-NS_INTERFACE_MAP_BEGIN(nsJSContext)
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsJSContext)
+// XXX Should we call ClearScope here?
+NS_IMPL_CYCLE_COLLECTION_UNLINK_0(nsJSContext)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsJSContext)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mGlobalWrapperRef)
+  {
+    ContextCallbackItem trc;
+    trc.cb = &cb;
+
+    JS_TRACER_INIT(&trc, tmp->mContext, NoteContextChild);
+    js_TraceContext(&trc, tmp->mContext);
+  }
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsJSContext)
   NS_INTERFACE_MAP_ENTRY(nsIScriptContext)
   NS_INTERFACE_MAP_ENTRY(nsIXPCScriptNotify)
   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
@@ -1023,8 +1073,8 @@ NS_INTERFACE_MAP_BEGIN(nsJSContext)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(nsJSContext)
-NS_IMPL_RELEASE(nsJSContext)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsJSContext, nsIScriptContext)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsJSContext, nsIScriptContext)
 
 nsresult
 nsJSContext::EvaluateStringWithValue(const nsAString& aScript,
@@ -2675,8 +2725,9 @@ nsJSContext::FindXPCNativeWrapperClass(nsIXPConnectJSObjectHolder *aHolder)
 }
 
 static JSPropertySpec OptionsProperties[] = {
-  {"strict",    JSOPTION_STRICT,    JSPROP_ENUMERATE | JSPROP_PERMANENT},
-  {"werror",    JSOPTION_WERROR,    JSPROP_ENUMERATE | JSPROP_PERMANENT},
+  {"strict",    (int8)JSOPTION_STRICT,   JSPROP_ENUMERATE | JSPROP_PERMANENT},
+  {"werror",    (int8)JSOPTION_WERROR,   JSPROP_ENUMERATE | JSPROP_PERMANENT},
+  {"relimit",   (int8)JSOPTION_RELIMIT,  JSPROP_ENUMERATE | JSPROP_PERMANENT},
   {0}
 };
 
@@ -2697,9 +2748,11 @@ SetOptionsProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
   if (JSVAL_IS_INT(id)) {
     uint32 optbit = (uint32) JSVAL_TO_INT(id);
 
-    // Don't let options other than strict and werror be set -- it would be
-    // bad if web page script could clear JSOPTION_PRIVATE_IS_NSISUPPORTS!
-    if ((optbit & (optbit - 1)) == 0 && optbit <= JSOPTION_WERROR) {
+    // Don't let options other than strict, werror, or relimit be set -- it
+    // would be bad if web page script could clear
+    // JSOPTION_PRIVATE_IS_NSISUPPORTS!
+    if (((optbit & (optbit - 1)) == 0 && optbit <= JSOPTION_WERROR) ||
+        optbit == JSOPTION_RELIMIT) {
       JSBool optval;
       if (! ::JS_ValueToBoolean(cx, *vp, &optval))
         return JS_FALSE;
@@ -3062,20 +3115,6 @@ nsJSContext::ScriptEvaluated(PRBool aTerminated)
   mBranchCallbackTime = LL_ZERO;
 }
 
-void
-nsJSContext::SetOwner(nsIScriptContextOwner* owner)
-{
-  // The owner should not be addrefed!! We'll be told
-  // when the owner goes away.
-  mOwner = owner;
-}
-
-nsIScriptContextOwner *
-nsJSContext::GetOwner()
-{
-  return mOwner;
-}
-
 nsresult
 nsJSContext::SetTerminationFunction(nsScriptTerminationFunc aFunc,
                                     nsISupports* aRef)
@@ -3326,6 +3365,7 @@ nsJSRuntime::ParseVersion(const nsString &aVersionStr, PRUint32 *flags)
         case '5': jsVersion = JSVERSION_1_5; break;
         case '6': jsVersion = JSVERSION_1_6; break;
         case '7': jsVersion = JSVERSION_1_7; break;
+        case '8': jsVersion = JSVERSION_1_8; break;
         default:  jsVersion = JSVERSION_UNKNOWN;
     }
     *flags = (PRUint32)jsVersion;
@@ -3567,13 +3607,17 @@ public:
   nsJSArgArray(JSContext *aContext, PRUint32 argc, jsval *argv, nsresult *prv);
   ~nsJSArgArray();
   // nsISupports
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsJSArgArray, nsIJSArgArray)
 
   // nsIArray
   NS_DECL_NSIARRAY
 
   // nsIJSArgArray
   nsresult GetArgs(PRUint32 *argc, void **argv);
+
+  void ReleaseJSObjects();
+
 protected:
   JSContext *mContext;
   jsval *mArgv;
@@ -3606,6 +3650,12 @@ nsJSArgArray::nsJSArgArray(JSContext *aContext, PRUint32 argc, jsval *argv,
 
 nsJSArgArray::~nsJSArgArray()
 {
+  ReleaseJSObjects();
+}
+
+void
+nsJSArgArray::ReleaseJSObjects()
+{
   if (mArgv) {
     NS_ASSERTION(nsJSRuntime::sRuntime, "Where's the runtime gone?");
     if (nsJSRuntime::sRuntime) {
@@ -3615,17 +3665,35 @@ nsJSArgArray::~nsJSArgArray()
     }
     PR_DELETE(mArgv);
   }
+  mArgc = 0;
 }
 
 // QueryInterface implementation for nsJSArgArray
-NS_INTERFACE_MAP_BEGIN(nsJSArgArray)
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsJSArgArray)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsJSArgArray)
+  tmp->ReleaseJSObjects();
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsJSArgArray)
+  {
+    jsval *argv = tmp->mArgv;
+    if (argv) {
+      jsval *end;
+      for (end = argv + tmp->mArgc; argv < end; ++argv) {
+        if (JSVAL_IS_OBJECT(*argv))
+          cb.NoteScriptChild(JAVASCRIPT, JSVAL_TO_OBJECT(*argv));
+      }
+    }
+  }
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsJSArgArray)
   NS_INTERFACE_MAP_ENTRY(nsIArray)
   NS_INTERFACE_MAP_ENTRY(nsIJSArgArray)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIJSArgArray)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_ADDREF(nsJSArgArray)
-NS_IMPL_RELEASE(nsJSArgArray)
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsJSArgArray, nsIJSArgArray)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsJSArgArray, nsIJSArgArray)
 
 nsresult
 nsJSArgArray::GetArgs(PRUint32 *argc, void **argv)

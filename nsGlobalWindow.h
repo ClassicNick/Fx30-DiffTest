@@ -56,13 +56,12 @@
 #include "nsDOMWindowList.h"
 #include "nsIBaseWindow.h"
 #include "nsIBrowserDOMWindow.h"
-#include "nsIChromeEventHandler.h"
 #include "nsIControllers.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIDOMClientInformation.h"
 #include "nsIDOMViewCSS.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsIDOM3EventTarget.h"
 #include "nsIDOMNSEventTarget.h"
 #include "nsIDOMNavigator.h"
@@ -95,6 +94,8 @@
 #include "nsIDOMStorage.h"
 #include "nsIDOMStorageList.h"
 #include "nsIDOMStorageWindow.h"
+#include "nsIDOMOfflineResourceList.h"
+#include "nsPIDOMEventTarget.h"
 
 #define DEFAULT_HOME_PAGE "www.mozilla.org"
 #define PREF_BROWSER_STARTUP_HOMEPAGE "browser.startup.homepage"
@@ -116,6 +117,8 @@ class nsIDocShellLoadInfo;
 class WindowStateHolder;
 class nsGlobalWindowObserver;
 class nsGlobalWindow;
+
+class nsDOMOfflineResourceList;
 
 // permissible values for CheckOpenAllow
 enum OpenAllowValue {
@@ -216,7 +219,8 @@ class nsGlobalWindow : public nsPIDOMWindow,
                        public nsIScriptGlobalObject,
                        public nsIDOMJSWindow,
                        public nsIScriptObjectPrincipal,
-                       public nsIDOMEventReceiver,
+                       public nsIDOMEventTarget,
+                       public nsPIDOMEventTarget,
                        public nsIDOM3EventTarget,
                        public nsIDOMNSEventTarget,
                        public nsIDOMViewCSS,
@@ -277,16 +281,6 @@ public:
   // nsIDOMNSEventTarget
   NS_DECL_NSIDOMNSEVENTTARGET
 
-  // nsIDOMEventReceiver
-  NS_IMETHOD AddEventListenerByIID(nsIDOMEventListener *aListener,
-                                   const nsIID& aIID);
-  NS_IMETHOD RemoveEventListenerByIID(nsIDOMEventListener *aListener,
-                                      const nsIID& aIID);
-  NS_IMETHOD GetListenerManager(PRBool aCreateIfNotFound,
-                                nsIEventListenerManager** aResult);
-  NS_IMETHOD HandleEvent(nsIDOMEvent *aEvent);
-  NS_IMETHOD GetSystemEventGroup(nsIDOMEventGroup** aGroup);
-
   // nsPIDOMWindow
   virtual NS_HIDDEN_(nsPIDOMWindow*) GetPrivateRoot();
   virtual NS_HIDDEN_(nsresult) Activate();
@@ -307,12 +301,27 @@ public:
 
   virtual NS_HIDDEN_(PRBool) WouldReuseInnerWindow(nsIDocument *aNewDocument);
 
+  virtual NS_HIDDEN_(nsPIDOMEventTarget*) GetTargetForDOMEvent()
+  {
+    return NS_STATIC_CAST(nsPIDOMEventTarget*, GetOuterWindowInternal());
+  }
+  virtual NS_HIDDEN_(nsPIDOMEventTarget*) GetTargetForEventTargetChain()
+  {
+    return NS_STATIC_CAST(nsPIDOMEventTarget*, GetCurrentInnerWindowInternal());
+  }
   virtual NS_HIDDEN_(nsresult) PreHandleEvent(nsEventChainPreVisitor& aVisitor);
   virtual NS_HIDDEN_(nsresult) PostHandleEvent(nsEventChainPostVisitor& aVisitor);
   virtual NS_HIDDEN_(nsresult) DispatchDOMEvent(nsEvent* aEvent,
                                                 nsIDOMEvent* aDOMEvent,
                                                 nsPresContext* aPresContext,
                                                 nsEventStatus* aEventStatus);
+  virtual NS_HIDDEN_(nsresult) GetListenerManager(PRBool aCreateIfNotFound,
+                                                  nsIEventListenerManager** aResult);
+  virtual NS_HIDDEN_(nsresult) AddEventListenerByIID(nsIDOMEventListener *aListener,
+                                                     const nsIID& aIID);
+  virtual NS_HIDDEN_(nsresult) RemoveEventListenerByIID(nsIDOMEventListener *aListener,
+                                                        const nsIID& aIID);
+  virtual NS_HIDDEN_(nsresult) GetSystemEventGroup(nsIDOMEventGroup** aGroup);
 
   virtual NS_HIDDEN_(void) SetDocShell(nsIDocShell* aDocShell);
   virtual NS_HIDDEN_(nsresult) SetNewDocument(nsIDocument *aDocument,
@@ -402,7 +411,8 @@ public:
 
   friend class WindowStateHolder;
 
-  NS_DECL_CYCLE_COLLECTION_CLASS(nsGlobalWindow)
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsGlobalWindow,
+                                           nsIScriptGlobalObject)
 
 protected:
   // Object Management
@@ -712,6 +722,9 @@ public:
   {
   }
 
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsGlobalChromeWindow,
+                                                     nsGlobalWindow)
+
 protected:
   nsCOMPtr<nsIBrowserDOMWindow> mBrowserDOMWindow;
 };
@@ -745,6 +758,7 @@ public:
 protected:
   nsRefPtr<nsMimeTypeArray> mMimeTypes;
   nsRefPtr<nsPluginArray> mPlugins;
+  nsRefPtr<nsDOMOfflineResourceList> mOfflineResources;
   nsIDocShell* mDocShell; // weak reference
 
   static jsval       sPrefInternal_id;
