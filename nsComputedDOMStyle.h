@@ -79,14 +79,10 @@ private:
   
 #define STYLE_STRUCT(name_, checkdata_cb_, ctor_args_)                  \
   const nsStyle##name_ * GetStyle##name_() {                            \
-    return NS_STATIC_CAST(const nsStyle##name_ *,                       \
-                          GetStyleData(eStyleStruct_##name_));          \
+    return mStyleContextHolder->GetStyle##name_();                      \
   }
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
-
-  // This never returns null
-  const nsStyleStruct* GetStyleData(nsStyleStructID aSID);
 
   nsresult GetOffsetWidthFor(PRUint8 aSide, nsIDOMCSSValue** aValue);
 
@@ -112,8 +108,7 @@ private:
 
   nsresult GetMarginWidthFor(PRUint8 aSide, nsIDOMCSSValue** aValue);
 
-  nsresult GetLineHeightCoord(const nsStyleText *aText,
-                              nscoord& aCoord);
+  PRBool GetLineHeightCoord(nscoord& aCoord);
 
   /* Properties Queryable as CSSValues */
 
@@ -260,6 +255,7 @@ private:
 
   /* User interface properties */
   nsresult GetCursor(nsIDOMCSSValue** aValue);
+  nsresult GetIMEMode(nsIDOMCSSValue** aValue);
   nsresult GetUserFocus(nsIDOMCSSValue** aValue);
   nsresult GetUserInput(nsIDOMCSSValue** aValue);
   nsresult GetUserModify(nsIDOMCSSValue** aValue);
@@ -273,6 +269,48 @@ private:
   nsROCSSPrimitiveValue* GetROCSSPrimitiveValue();
   nsDOMCSSValueList* GetROCSSValueList(PRBool aCommaDelimited);
   nsresult SetToRGBAColor(nsROCSSPrimitiveValue* aValue, nscolor aColor);
+  
+  /**
+   * A method to get a percentage base for a percentage value.  Returns PR_TRUE
+   * if a percentage base value was determined, PR_FALSE otherwise.
+   */
+  typedef PRBool (nsComputedDOMStyle::*PercentageBaseGetter)(nscoord&);
+
+  /**
+   * Method to set aValue to aCoord.  If aCoord is a percentage value and
+   * aPercentageBaseGetter is not null, aPercentageBaseGetter is called.  If it
+   * returns PR_TRUE, the percentage base it outputs in its out param is used
+   * to compute an nscoord value.  If the getter is null or returns PR_FALSE,
+   * the percent value of aCoord is set as a percent value on aValue.  aTable,
+   * if not null, is the keyword table to handle eStyleUnit_Enumerated.  When
+   * calling SetAppUnits on aValue (for coord or percent values), the value
+   * passed in will be PR_MAX of the value in aMinAppUnits and the PR_MIN of
+   * the actual value in aCoord and the value in aMaxAppUnits.
+   *
+   * XXXbz should caller pass in some sort of bitfield indicating which units
+   * can be expected or something?
+   */
+  void SetValueToCoord(nsROCSSPrimitiveValue* aValue,
+                       const nsStyleCoord& aCoord,
+                       PercentageBaseGetter aPercentageBaseGetter = nsnull,
+                       const PRInt32 aTable[] = nsnull,
+                       nscoord aMinAppUnits = nscoord_MIN,
+                       nscoord aMaxAppUnits = nscoord_MAX);
+
+  /**
+   * If aCoord is a eStyleUnit_Coord returns the nscoord.  If it's
+   * eStyleUnit_Percent, attempts to resolve the percentage base and returns
+   * the resulting nscoord.  If it's some other unit or a percentge base can't
+   * be determined, returns aDefaultValue.
+   */
+  nscoord StyleCoordToNSCoord(const nsStyleCoord& aCoord,
+                              PercentageBaseGetter aPercentageBaseGetter,
+                              nscoord aDefaultValue);
+
+  PRBool GetFrameContentWidth(nscoord& aWidth);
+  PRBool GetCBContentWidth(nscoord& aWidth);
+  PRBool GetCBContentHeight(nscoord& aWidth);
+  PRBool GetFrameBorderRectWidth(nscoord& aWidth);
 
   struct ComputedStyleMapEntry
   {
@@ -294,8 +332,9 @@ private:
   nsCOMPtr<nsIContent> mContent;
 
   /*
-   * When a frame is unavailable, strong reference to the
-   * style context while we're accessing the data from it.
+   * Strong reference to the style context while we're accessing the data from
+   * it.  This can be either a style context we resolved ourselves or a style
+   * context we got from our frame.
    */
   nsRefPtr<nsStyleContext> mStyleContextHolder;
   nsCOMPtr<nsIAtom> mPseudo;
@@ -305,6 +344,11 @@ private:
    * otherwise.
    */
   nsIFrame* mFrame;
+  /*
+   * While computing style data, the presshell we're working with.  Null
+   * otherwise.
+   */
+  nsIPresShell* mPresShell;
 
   float mT2P; /* For unit conversions */
 };

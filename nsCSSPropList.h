@@ -83,10 +83,6 @@
 /*************************************************************************/
 
 
-// XXX Should we really be using CSS_PROP_SHORTHAND for 'border-spacing',
-// 'background-position', and 'size'?
-
-
 // All includers must explicitly define CSS_PROP_NOTIMPLEMENTED if they
 // want this.  (Only the DOM cares.)
 #ifndef CSS_PROP_NOTIMPLEMENTED
@@ -273,6 +269,9 @@ CSS_PROP_OUTLINE(-moz-outline-radius-topleft, _moz_outline_radius_topLeft, MozOu
 CSS_PROP_OUTLINE(-moz-outline-radius-topright, _moz_outline_radius_topRight, MozOutlineRadiusTopright, Margin, mOutlineRadius.mRight, eCSSType_Value, nsnull)
 CSS_PROP_OUTLINE(-moz-outline-radius-bottomleft, _moz_outline_radius_bottomLeft, MozOutlineRadiusBottomleft, Margin, mOutlineRadius.mLeft, eCSSType_Value, nsnull)
 CSS_PROP_OUTLINE(-moz-outline-radius-bottomright, _moz_outline_radius_bottomRight, MozOutlineRadiusBottomright, Margin, mOutlineRadius.mBottom, eCSSType_Value, nsnull)
+#ifndef CSS_PROP_LIST_EXCLUDE_INTERNAL
+CSS_PROP_FONT(-x-system-font, _x_system_font, X, Font, mSystemFont, eCSSType_Value, kFontKTable)
+#endif
 CSS_PROP_BACKENDONLY(azimuth, azimuth, Azimuth, Aural, mAzimuth, eCSSType_Value, kAzimuthKTable)
 CSS_PROP_SHORTHAND(background, background, Background)
 CSS_PROP_BACKGROUND(background-attachment, background_attachment, BackgroundAttachment, Color, mBackAttachment, eCSSType_Value, kBackgroundAttachmentKTable)
@@ -281,12 +280,8 @@ CSS_PROP_BACKGROUND(background-color, background_color, BackgroundColor, Color, 
 CSS_PROP_BACKGROUND(background-image, background_image, BackgroundImage, Color, mBackImage, eCSSType_Value, nsnull)
 CSS_PROP_BACKGROUND(-moz-background-inline-policy, _moz_background_inline_policy, MozBackgroundInlinePolicy, Color, mBackInlinePolicy, eCSSType_Value, kBackgroundInlinePolicyKTable)
 CSS_PROP_BACKGROUND(-moz-background-origin, _moz_background_origin, MozBackgroundOrigin, Color, mBackOrigin, eCSSType_Value, kBackgroundOriginKTable)
-CSS_PROP_SHORTHAND(background-position, background_position, BackgroundPosition)
+CSS_PROP_BACKGROUND(background-position, background_position, BackgroundPosition, Color, mBackPosition, eCSSType_ValuePair, kBackgroundPositionKTable)
 CSS_PROP_BACKGROUND(background-repeat, background_repeat, BackgroundRepeat, Color, mBackRepeat, eCSSType_Value, kBackgroundRepeatKTable)
-#ifndef CSS_PROP_LIST_EXCLUDE_INTERNAL
-CSS_PROP_BACKGROUND(-x-background-x-position, background_x_position, BackgroundXPosition, Color, mBackPositionX, eCSSType_Value, kBackgroundXPositionKTable) // XXX bug 3935
-CSS_PROP_BACKGROUND(-x-background-y-position, background_y_position, BackgroundYPosition, Color, mBackPositionY, eCSSType_Value, kBackgroundYPositionKTable) // XXX bug 3935
-#endif /* !defined (CSS_PROP_LIST_EXCLUDE_INTERNAL) */
 CSS_PROP_DISPLAY(-moz-binding, binding, MozBinding, Display, mBinding, eCSSType_Value, nsnull) // XXX bug 3935
 CSS_PROP_SHORTHAND(border, border, Border)
 CSS_PROP_SHORTHAND(border-bottom, border_bottom, BorderBottom)
@@ -337,7 +332,7 @@ CSS_PROP_TABLEBORDER(empty-cells, empty_cells, EmptyCells, Table, mEmptyCells, e
 CSS_PROP_DISPLAY(float, float, CssFloat, Display, mFloat, eCSSType_Value, kFloatKTable)
 CSS_PROP_BORDER(-moz-float-edge, float_edge, MozFloatEdge, Margin, mFloatEdge, eCSSType_Value, kFloatEdgeKTable) // XXX bug 3935
 CSS_PROP_SHORTHAND(font, font, Font)
-CSS_PROP_FONT(font-family, font_family, FontFamily, Font, mFamily, eCSSType_Value, kFontKTable)
+CSS_PROP_FONT(font-family, font_family, FontFamily, Font, mFamily, eCSSType_Value, nsnull)
 CSS_PROP_FONT(font-size, font_size, FontSize, Font, mSize, eCSSType_Value, kFontSizeKTable)
 CSS_PROP_FONT(font-size-adjust, font_size_adjust, FontSizeAdjust, Font, mSizeAdjust, eCSSType_Value, nsnull)
 CSS_PROP_BACKENDONLY(font-stretch, font_stretch, FontStretch, Font, mStretch, eCSSType_Value, kFontStretchKTable)
@@ -347,6 +342,7 @@ CSS_PROP_FONT(font-weight, font_weight, FontWeight, Font, mWeight, eCSSType_Valu
 CSS_PROP_UIRESET(-moz-force-broken-image-icon, force_broken_image_icon, MozForceBrokenImageIcon, UserInterface, mForceBrokenImageIcon, eCSSType_Value, nsnull) // bug 58646
 CSS_PROP_POSITION(height, height, Height, Position, mHeight, eCSSType_Value, nsnull)
 CSS_PROP_LIST(-moz-image-region, image_region, MozImageRegion, List, mImageRegion, eCSSType_Rect, nsnull)
+CSS_PROP_UIRESET(ime-mode, ime_mode, ImeMode, UserInterface, mIMEMode, eCSSType_Value, kIMEModeKTable)
 CSS_PROP_POSITION(left, left, Left, Position, mOffset.mLeft, eCSSType_Value, nsnull)
 CSS_PROP_TEXT(letter-spacing, letter_spacing, LetterSpacing, Text, mLetterSpacing, eCSSType_Value, nsnull)
 CSS_PROP_TEXT(line-height, line_height, LineHeight, Text, mLineHeight, eCSSType_Value, nsnull)
@@ -380,9 +376,9 @@ CSS_PROP_MARGIN(margin-top, margin_top, MarginTop, Margin, mMargin.mTop, eCSSTyp
 CSS_PROP_CONTENT(marker-offset, marker_offset, MarkerOffset, Content, mMarkerOffset, eCSSType_Value, nsnull)
 CSS_PROP_BACKENDONLY(marks, marks, Marks, Page, mMarks, eCSSType_Value, kPageMarksKTable)
 CSS_PROP_POSITION(max-height, max_height, MaxHeight, Position, mMaxHeight, eCSSType_Value, nsnull)
-CSS_PROP_POSITION(max-width, max_width, MaxWidth, Position, mMaxWidth, eCSSType_Value, nsnull)
+CSS_PROP_POSITION(max-width, max_width, MaxWidth, Position, mMaxWidth, eCSSType_Value, kWidthKTable)
 CSS_PROP_POSITION(min-height, min_height, MinHeight, Position, mMinHeight, eCSSType_Value, nsnull)
-CSS_PROP_POSITION(min-width, min_width, MinWidth, Position, mMinWidth, eCSSType_Value, nsnull)
+CSS_PROP_POSITION(min-width, min_width, MinWidth, Position, mMinWidth, eCSSType_Value, kWidthKTable)
 CSS_PROP_DISPLAY(opacity, opacity, Opacity, Display, mOpacity, eCSSType_Value, nsnull) // XXX bug 3935
 CSS_PROP_BACKENDONLY(orphans, orphans, Orphans, Breaks, mOrphans, eCSSType_Value, nsnull)
 CSS_PROP_SHORTHAND(outline, outline, Outline)
@@ -454,7 +450,7 @@ CSS_PROP_BACKENDONLY(voice-family, voice_family, VoiceFamily, Aural, mVoiceFamil
 CSS_PROP_BACKENDONLY(volume, volume, Volume, Aural, mVolume, eCSSType_Value, kVolumeKTable)
 CSS_PROP_TEXT(white-space, white_space, WhiteSpace, Text, mWhiteSpace, eCSSType_Value, kWhitespaceKTable)
 CSS_PROP_BACKENDONLY(widows, widows, Widows, Breaks, mWidows, eCSSType_Value, nsnull)
-CSS_PROP_POSITION(width, width, Width, Position, mWidth, eCSSType_Value, nsnull)
+CSS_PROP_POSITION(width, width, Width, Position, mWidth, eCSSType_Value, kWidthKTable)
 CSS_PROP_TEXT(word-spacing, word_spacing, WordSpacing, Text, mWordSpacing, eCSSType_Value, nsnull)
 CSS_PROP_POSITION(z-index, z_index, ZIndex, Position, mZIndex, eCSSType_Value, nsnull)
 

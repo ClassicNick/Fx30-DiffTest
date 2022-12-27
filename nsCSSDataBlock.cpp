@@ -43,6 +43,8 @@
 #include "nsCSSDataBlock.h"
 #include "nsCSSProps.h"
 #include "nsRuleData.h"
+#include "nsRuleNode.h"
+#include "nsStyleSet.h"
 
 /*
  * nsCSSCompressedDataBlock holds property-value pairs corresponding to
@@ -206,7 +208,7 @@ nsCSSCompressedDataBlock::MapRuleInfoInto(nsRuleData *aRuleData) const
                             // XXX Are there other things like this?
                             aRuleData->mFontData->mFamilyFromHTML = PR_FALSE;
                         }
-                    }
+					}
                     cursor += CDBValueStorage_advance;
                 } break;
 

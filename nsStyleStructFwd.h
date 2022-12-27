@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is Mozilla Communicator client code.
+ * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Original Author: David W. Hyatt (hyatt@netscape.com)
+ *   L. David Baron <dbaron@dbaron.org>, Mozilla Corporation
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -37,41 +37,29 @@
  * ***** END LICENSE BLOCK ***** */
 
 /*
- * a class that walks the lexicographic tree of rule nodes as style
- * rules are matched
+ * Forward declarations to avoid including all of nsStyleStruct.h.
  */
 
-#include "nsRuleNode.h"
+#ifndef nsStyleStructFwd_h_
+#define nsStyleStructFwd_h_
 
-class nsRuleWalker {
-public:
-  nsRuleNode* GetCurrentNode() { return mCurrent; }
-  void SetCurrentNode(nsRuleNode* aNode) { mCurrent = aNode; }
+enum nsStyleStructID {
 
-  void Forward(nsIStyleRule* aRule) { 
-    if (mCurrent) { // check for OOM from previous step
-      mCurrent = mCurrent->Transition(aRule, mLevel, mImportance);
-    }
-  }
+/*
+ * Define the constants eStyleStruct_Font, etc.
+ *
+ * The C++ standard, section 7.2, guarantees that enums begin with 0 and
+ * increase by 1.
+ */
 
-  void Reset() { mCurrent = mRoot; }
+#define STYLE_STRUCT(name, checkdata_cb, ctor_args) eStyleStruct_##name,
+#include "nsStyleStructList.h"
+#undef STYLE_STRUCT
 
-  PRBool AtRoot() { return mCurrent == mRoot; }
+nsStyleStructID_Length /* one past the end; length of 0-based list */
 
-  void SetLevel(PRUint8 aLevel, PRBool aImportance) {
-    mLevel = aLevel;
-    mImportance = aImportance;
-  }
-  PRUint8 GetLevel() const { return mLevel; }
-  PRBool GetImportance() const { return mImportance; }
-
-private:
-  nsRuleNode* mCurrent; // Our current position.
-  nsRuleNode* mRoot; // The root of the tree we're walking.
-  PRUint8 mLevel; // an nsStyleSet::sheetType
-  PRPackedBool mImportance;
-
-public:
-  nsRuleWalker(nsRuleNode* aRoot) :mCurrent(aRoot), mRoot(aRoot) { MOZ_COUNT_CTOR(nsRuleWalker); }
-  ~nsRuleWalker() { MOZ_COUNT_DTOR(nsRuleWalker); }
 };
+
+struct nsStyleStruct;
+
+#endif /* nsStyleStructFwd_h_ */

@@ -138,8 +138,7 @@ nsCSSColor::nsCSSColor(const nsCSSColor& aCopy)
     mBackImage(aCopy.mBackImage),
     mBackRepeat(aCopy.mBackRepeat),
     mBackAttachment(aCopy.mBackAttachment),
-    mBackPositionX(aCopy.mBackPositionX),
-    mBackPositionY(aCopy.mBackPositionY),
+    mBackPosition(aCopy.mBackPosition),
     mBackClip(aCopy.mBackClip),
     mBackOrigin(aCopy.mBackOrigin),
     mBackInlinePolicy(aCopy.mBackInlinePolicy)
@@ -566,7 +565,8 @@ nsCSSUserInterface::nsCSSUserInterface(const nsCSSUserInterface& aCopy)
     mUserSelect(aCopy.mUserSelect),
     mUserFocus(aCopy.mUserFocus),
     mCursor(nsnull),
-    mForceBrokenImageIcon(aCopy.mForceBrokenImageIcon)
+    mForceBrokenImageIcon(aCopy.mForceBrokenImageIcon),
+    mIMEMode(aCopy.mIMEMode)
 {
   MOZ_COUNT_CTOR(nsCSSUserInterface);
   CSS_IF_COPY(mCursor, nsCSSValueList);

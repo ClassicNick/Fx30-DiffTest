@@ -60,8 +60,6 @@ typedef nsCSSStruct nsRuleDataStruct;
 struct nsRuleDataFont;
 class nsCSSValue;
 
-typedef void (*nsPostResolveFunc)(nsStyleStruct* aStyleStruct, nsRuleData* aData);
-
 struct nsInheritedStyleData
 {
 
@@ -76,7 +74,7 @@ struct nsInheritedStyleData
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
     return aContext->AllocateFromShell(sz);
-  };
+  }
 
   void ClearInheritedData(PRUint32 aBits) {
 #define STYLE_STRUCT_INHERITED(name, checkdata_cb, ctor_args) \
@@ -88,7 +86,7 @@ struct nsInheritedStyleData
 
 #undef STYLE_STRUCT_INHERITED
 #undef STYLE_STRUCT_RESET
-  };
+  }
 
   void Destroy(PRUint32 aBits, nsPresContext* aContext) {
 #define STYLE_STRUCT_INHERITED(name, checkdata_cb, ctor_args) \
@@ -102,7 +100,7 @@ struct nsInheritedStyleData
 #undef STYLE_STRUCT_RESET
 
     aContext->FreeToShell(sizeof(nsInheritedStyleData), this);
-  };
+  }
 
   nsInheritedStyleData() {
 #define STYLE_STRUCT_INHERITED(name, checkdata_cb, ctor_args) \
@@ -114,7 +112,7 @@ struct nsInheritedStyleData
 #undef STYLE_STRUCT_INHERITED
 #undef STYLE_STRUCT_RESET
 
-  };
+  }
 };
 
 struct nsResetStyleData
@@ -129,7 +127,7 @@ struct nsResetStyleData
 
 #undef STYLE_STRUCT_RESET
 #undef STYLE_STRUCT_INHERITED
-  };
+  }
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
     return aContext->AllocateFromShell(sz);
@@ -145,7 +143,7 @@ struct nsResetStyleData
 
 #undef STYLE_STRUCT_RESET
 #undef STYLE_STRUCT_INHERITED
-  };
+  }
 
   void Destroy(PRUint32 aBits, nsPresContext* aContext) {
 #define STYLE_STRUCT_RESET(name, checkdata_cb, ctor_args) \
@@ -159,7 +157,7 @@ struct nsResetStyleData
 #undef STYLE_STRUCT_INHERITED
 
     aContext->FreeToShell(sizeof(nsResetStyleData), this);
-  };
+  }
 
 #define STYLE_STRUCT_RESET(name, checkdata_cb, ctor_args) \
   nsStyle##name * m##name##Data;
@@ -187,11 +185,11 @@ struct nsCachedStyleData
 
   static PRBool IsReset(const nsStyleStructID& aSID) {
     return gInfo[aSID].mIsReset;
-  };
+  }
 
   static PRUint32 GetBitForSID(const nsStyleStructID& aSID) {
     return 1 << aSID;
-  };
+  }
 
   NS_HIDDEN_(nsStyleStruct*) NS_FASTCALL GetStyleData(const nsStyleStructID& aSID) {
     // Each struct is stored at this.m##type##Data->m##name##Data where
@@ -222,7 +220,7 @@ struct nsCachedStyleData
       data = *NS_REINTERPRET_CAST(nsStyleStruct**, dataSlot);
     }
     return data;
-  };
+  }
 
   // Typesafe and faster versions of the above
   #define STYLE_STRUCT_INHERITED(name_, checkdata_cb_, ctor_args_)       \
@@ -253,8 +251,8 @@ struct nsCachedStyleData
     mInheritedData = nsnull;
   }
 
-  nsCachedStyleData() :mInheritedData(nsnull), mResetData(nsnull) {};
-  ~nsCachedStyleData() {};
+  nsCachedStyleData() :mInheritedData(nsnull), mResetData(nsnull) {}
+  ~nsCachedStyleData() {}
 };
 
 /**
@@ -333,6 +331,42 @@ private:
                        // specific rule (which is the optimal order to
                        // use for lookups of style properties.
   nsIStyleRule* mRule; // [STRONG] A pointer to our specific rule.
+
+  struct Key {
+    nsIStyleRule* mRule;
+    PRUint8 mLevel;
+    PRPackedBool mIsImportantRule;
+
+    Key(nsIStyleRule* aRule, PRUint8 aLevel, PRPackedBool aIsImportantRule)
+      : mRule(aRule), mLevel(aLevel), mIsImportantRule(aIsImportantRule)
+    {}
+
+    PRBool operator==(const Key& aOther) const
+    {
+      return mRule == aOther.mRule &&
+             mLevel == aOther.mLevel &&
+             mIsImportantRule == aOther.mIsImportantRule;
+    }
+
+    PRBool operator!=(const Key& aOther) const
+    {
+      return !(*this == aOther);
+    }
+  };
+
+  static PR_CALLBACK PLDHashNumber
+  ChildrenHashHashKey(PLDHashTable *aTable, const void *aKey);
+
+  static PR_CALLBACK PRBool
+  ChildrenHashMatchEntry(PLDHashTable *aTable,
+                         const PLDHashEntryHdr *aHdr,
+                         const void *aKey);
+
+  static PLDHashTableOps ChildrenHashOps;
+
+  Key GetKey() const {
+    return Key(mRule, GetLevel(), IsImportantRule());
+  }
 
   // The children of this node are stored in either a hashtable or list
   // that maps from rules to our nsRuleNode children.  When matching
@@ -631,16 +665,29 @@ protected:
 #endif
 
 private:
-  nsRuleNode(nsPresContext* aPresContext, nsIStyleRule* aRule,
-             nsRuleNode* aParent) NS_HIDDEN;
+  nsRuleNode(nsPresContext* aPresContext, nsRuleNode* aParent,
+             nsIStyleRule* aRule, PRUint8 aLevel, PRBool aIsImportant)
+    NS_HIDDEN;
   ~nsRuleNode() NS_HIDDEN;
 
 public:
   static NS_HIDDEN_(nsRuleNode*) CreateRootNode(nsPresContext* aPresContext);
 
-  NS_HIDDEN_(nsresult) Transition(nsIStyleRule* aRule, nsRuleNode** aResult);
+  NS_HIDDEN_(nsRuleNode*) Transition(nsIStyleRule* aRule, PRUint8 aLevel,
+                                     PRPackedBool aIsImportantRule);
   nsRuleNode* GetParent() const { return mParent; }
   PRBool IsRoot() const { return mParent == nsnull; }
+
+  // These PRUint8s are really nsStyleSet::sheetType values.
+  PRUint8 GetLevel() const { 
+    NS_ASSERTION(!IsRoot(), "can't call on root");
+    return (mDependentBits & NS_RULE_NODE_LEVEL_MASK) >>
+             NS_RULE_NODE_LEVEL_SHIFT;
+  }
+  PRBool IsImportantRule() const {
+    NS_ASSERTION(!IsRoot(), "can't call on root");
+    return (mDependentBits & NS_RULE_NODE_IS_IMPORTANT) != 0;
+  }
 
   // NOTE:  Does not |AddRef|.
   nsIStyleRule* GetRule() const { return mRule; }

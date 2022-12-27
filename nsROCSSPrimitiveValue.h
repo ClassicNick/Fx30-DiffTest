@@ -96,18 +96,16 @@ public:
     mType = CSS_PERCENTAGE;
   }
 
-  void SetTwips(nscoord aValue)
+  void SetAppUnits(nscoord aValue)
   {
     Reset();
-    mValue.mTwips = aValue;
+    mValue.mAppUnits = aValue;
     mType = CSS_PX;
   }
 
-  void SetTwips(float aValue)
+  void SetAppUnits(float aValue)
   {
-    Reset();
-    mValue.mTwips = nscoord(aValue);
-    mType = CSS_PX;
+    SetAppUnits(NSToCoordRound(aValue));
   }
 
   void SetIdent(nsIAtom* aAtom)
@@ -222,7 +220,7 @@ private:
   PRUint16 mType;
 
   union {
-    nscoord         mTwips;
+    nscoord         mAppUnits;
     float           mFloat;
     nsDOMCSSRGBColor* mColor;
     nsIDOMRect*     mRect;

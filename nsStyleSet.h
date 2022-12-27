@@ -49,7 +49,7 @@
 #include "nsIStyleRuleProcessor.h"
 #include "nsICSSStyleSheet.h"
 #include "nsVoidArray.h"
-#include "nsIStyleRuleSupplier.h"
+#include "nsBindingManager.h"
 #include "nsRuleNode.h"
 
 class nsIURI;
@@ -142,14 +142,9 @@ class nsStyleSet
 
   // APIs for registering objects that can supply additional
   // rules during processing.
-  void SetStyleRuleSupplier(nsIStyleRuleSupplier* aSupplier)
+  void SetBindingManager(nsBindingManager* aBindingManager)
   {
-    mStyleRuleSupplier = aSupplier;
-  }
-
-  nsIStyleRuleSupplier* GetStyleRuleSupplier() const
-  {
-    return mStyleRuleSupplier;
+    mBindingManager = aBindingManager;
   }
 
   // Free global data at module shutdown
@@ -166,8 +161,9 @@ class nsStyleSet
     eStyleAttrSheet,
     eOverrideSheet, // CSS
     eSheetTypeCount
-    // be sure to keep the number of bits in |mDirty| below updated when
-    // changing the number of sheet types
+    // be sure to keep the number of bits in |mDirty| below and in
+    // NS_RULE_NODE_LEVEL_MASK updated when changing the number of sheet
+    // types
   };
 
   // APIs to manipulate the style sheet lists.  The sheets in each
@@ -239,6 +235,10 @@ class nsStyleSet
 
   nsPresContext* PresContext() { return mRuleTree->GetPresContext(); }
 
+  // Return true if aContent or one of its ancestors in the
+  // bindingParent chain is native anonymous.
+  static PRBool IsNativeAnonymous(nsIContent* aContent);
+
   static nsIURI  *gQuirkURI;
 
   // The sheets in each array in mSheets are stored with the most significant
@@ -250,7 +250,7 @@ class nsStyleSet
   // cached instance for enabling/disabling
   nsCOMPtr<nsIStyleSheet> mQuirkStyleSheet;
 
-  nsCOMPtr<nsIStyleRuleSupplier> mStyleRuleSupplier;
+  nsRefPtr<nsBindingManager> mBindingManager;
 
   // To be used only in case of emergency, such as being out of memory
   // or operating on a deleted rule node.  The latter should never

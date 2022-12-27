@@ -65,22 +65,8 @@
 class nsIFrame;
 class imgIRequest;
 
-enum nsStyleStructID {
-
-/*
- * Define the constants eStyleStruct_Font, etc.
- *
- * The C++ standard, section 7.2, guarantees that enums begin with 0 and
- * increase by 1.
- */
-
-#define STYLE_STRUCT(name, checkdata_cb, ctor_args) eStyleStruct_##name,
-#include "nsStyleStructList.h"
-#undef STYLE_STRUCT
-
-nsStyleStructID_Length /* one past the end; length of 0-based list */
-
-};
+// Includes nsStyleStructID.
+#include "nsStyleStructFwd.h"
 
 // Bits for each struct.
 #define NS_STYLE_INHERIT_BIT(sid_)        (1 << PRInt32(eStyleStruct_##sid_))
@@ -92,6 +78,9 @@ nsStyleStructID_Length /* one past the end; length of 0-based list */
 
 // Additional bits for nsRuleNode's mDependentBits:
 #define NS_RULE_NODE_GC_MARK              0x02000000
+#define NS_RULE_NODE_IS_IMPORTANT         0x08000000
+#define NS_RULE_NODE_LEVEL_MASK           0xf0000000
+#define NS_RULE_NODE_LEVEL_SHIFT          28
 
 // The actual structs start here
 struct nsStyleStruct {
@@ -104,7 +93,7 @@ struct nsStyleFont : public nsStyleStruct {
   nsStyleFont(const nsFont& aFont);
   nsStyleFont(const nsStyleFont& aStyleFont);
   nsStyleFont(nsPresContext *aPresContext);
-  ~nsStyleFont(void) {};
+  ~nsStyleFont(void) {}
 
   nsChangeHint CalcDifference(const nsStyleFont& aOther) const;
 #ifdef DEBUG
@@ -129,7 +118,7 @@ struct nsStyleFont : public nsStyleStruct {
 struct nsStyleColor : public nsStyleStruct {
   nsStyleColor(nsPresContext* aPresContext);
   nsStyleColor(const nsStyleColor& aOther);
-  ~nsStyleColor(void) {};
+  ~nsStyleColor(void) {}
 
   nsChangeHint CalcDifference(const nsStyleColor& aOther) const;
 #ifdef DEBUG
@@ -142,7 +131,7 @@ struct nsStyleColor : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleColor();
     aContext->FreeToShell(sizeof(nsStyleColor), this);
-  };
+  }
 
   // Don't add ANY members to this struct!  We can achieve caching in the rule
   // tree (rather than the style tree) by letting color stay by itself! -dwh
@@ -160,7 +149,7 @@ struct nsStyleBackground : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleBackground();
     aContext->FreeToShell(sizeof(nsStyleBackground), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleBackground& aOther) const;
 #ifdef DEBUG
@@ -204,7 +193,9 @@ struct nsStyleBackground : public nsStyleStruct {
 
 #define BORDER_COLOR_TRANSPARENT  0x40
 #define BORDER_COLOR_FOREGROUND   0x20
-#define BORDER_COLOR_SPECIAL      0x60 // TRANSPARENT | FOREGROUND 
+#define OUTLINE_COLOR_INITIAL     0x80
+// TRANSPARENT | FOREGROUND | INITIAL(OUTLINE)
+#define BORDER_COLOR_SPECIAL      0xE0
 #define BORDER_STYLE_MASK         0x1F
 
 #define NS_SPACING_MARGIN   0
@@ -215,7 +206,7 @@ struct nsStyleBackground : public nsStyleStruct {
 struct nsStyleMargin: public nsStyleStruct {
   nsStyleMargin(void);
   nsStyleMargin(const nsStyleMargin& aMargin);
-  ~nsStyleMargin(void) {};
+  ~nsStyleMargin(void) {}
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW;
   void Destroy(nsPresContext* aContext);
@@ -246,7 +237,7 @@ protected:
 struct nsStylePadding: public nsStyleStruct {
   nsStylePadding(void);
   nsStylePadding(const nsStylePadding& aPadding);
-  ~nsStylePadding(void) {};
+  ~nsStylePadding(void) {}
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW;
   void Destroy(nsPresContext* aContext);
@@ -285,7 +276,7 @@ struct nsBorderColors {
     return new nsBorderColors(mColor, mTransparent, next);
   }
 
-  nsBorderColors() :mNext(nsnull) { mColor = NS_RGB(0,0,0); };
+  nsBorderColors() :mNext(nsnull) { mColor = NS_RGB(0,0,0); }
 
   nsBorderColors(const nscolor& aColor, PRBool aTransparent, nsBorderColors* aNext=nsnull) {
     mColor = aColor;
@@ -314,7 +305,14 @@ struct nsBorderColors {
 // Border widths are rounded to the nearest integer number of pixels, but values
 // between zero and one device pixels are always rounded up to one device pixel.
 #define NS_ROUND_BORDER_TO_PIXELS(l,tpp) \
-    ((l) == 0) ? 0 : PR_MAX((tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp))
+  ((l) == 0) ? 0 : PR_MAX((tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp))
+// Outline offset is rounded to the nearest integer number of pixels, but values
+// between zero and one device pixels are always rounded up to one device pixel.
+// Note that the offset can be negative.
+#define NS_ROUND_OFFSET_TO_PIXELS(l,tpp) \
+  (((l) == 0) ? 0 : \
+    ((l) > 0) ? PR_MAX( (tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp)) : \
+                PR_MIN(-(tpp), ((l) - ((tpp) / 2)) / (tpp) * (tpp)))
 
 struct nsStyleBorder: public nsStyleStruct {
   nsStyleBorder(nsPresContext* aContext);
@@ -325,7 +323,7 @@ struct nsStyleBorder: public nsStyleStruct {
         delete mBorderColors[i];
       delete []mBorderColors;
     }
-  };
+  }
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW;
   void Destroy(nsPresContext* aContext);
@@ -500,7 +498,7 @@ protected:
 struct nsStyleOutline: public nsStyleStruct {
   nsStyleOutline(nsPresContext* aPresContext);
   nsStyleOutline(const nsStyleOutline& aOutline);
-  ~nsStyleOutline(void) {};
+  ~nsStyleOutline(void) {}
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
     return aContext->AllocateFromShell(sz);
@@ -508,7 +506,7 @@ struct nsStyleOutline: public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleOutline();
     aContext->FreeToShell(sizeof(nsStyleOutline), this);
-  };
+  }
 
   void RecalcData(nsPresContext* aContext);
   nsChangeHint CalcDifference(const nsStyleOutline& aOther) const;
@@ -529,7 +527,7 @@ struct nsStyleOutline: public nsStyleStruct {
   {
     if (mOutlineOffset.GetUnit() == eStyleUnit_Coord) {
       nscoord offset = mOutlineOffset.GetCoordValue();
-      aOffset = NS_ROUND_BORDER_TO_PIXELS(offset, mTwipsPerPixel);
+      aOffset = NS_ROUND_OFFSET_TO_PIXELS(offset, mTwipsPerPixel);
       return PR_TRUE;
     } else {
       NS_NOTYETIMPLEMENTED("GetOutlineOffset: eStyleUnit_Chars");
@@ -558,7 +556,7 @@ struct nsStyleOutline: public nsStyleStruct {
     mOutlineStyle |= (aStyle & BORDER_STYLE_MASK);
   }
 
-  // PR_FALSE means INVERT 
+  // PR_FALSE means initial value
   PRBool GetOutlineColor(nscolor& aColor) const
   {
     if ((mOutlineStyle & BORDER_COLOR_SPECIAL) == 0) {
@@ -574,14 +572,14 @@ struct nsStyleOutline: public nsStyleStruct {
     mOutlineStyle &= ~BORDER_COLOR_SPECIAL;
   }
 
-  void SetOutlineInvert(void)
+  void SetOutlineInitialColor()
   {
-    mOutlineStyle |= BORDER_COLOR_SPECIAL;
+    mOutlineStyle |= OUTLINE_COLOR_INITIAL;
   }
 
-  PRBool  GetOutlineInvert(void) const
+  PRBool GetOutlineInitialColor() const
   {
-    return(mOutlineStyle & BORDER_COLOR_SPECIAL);
+    return (mOutlineStyle & OUTLINE_COLOR_INITIAL);
   }
 
 protected:
@@ -609,7 +607,7 @@ struct nsStyleList : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleList();
     aContext->FreeToShell(sizeof(nsStyleList), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleList& aOther) const;
 #ifdef DEBUG
@@ -633,7 +631,7 @@ struct nsStylePosition : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStylePosition();
     aContext->FreeToShell(sizeof(nsStylePosition), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStylePosition& aOther) const;
 #ifdef DEBUG
@@ -641,9 +639,9 @@ struct nsStylePosition : public nsStyleStruct {
 #endif
   
   nsStyleSides  mOffset;                // [reset]
-  nsStyleCoord  mWidth;                 // [reset] coord, percent, auto
-  nsStyleCoord  mMinWidth;              // [reset] coord, percent
-  nsStyleCoord  mMaxWidth;              // [reset] coord, percent, null
+  nsStyleCoord  mWidth;                 // [reset] coord, percent, auto, enum
+  nsStyleCoord  mMinWidth;              // [reset] coord, percent, enum
+  nsStyleCoord  mMaxWidth;              // [reset] coord, percent, null, enum
   nsStyleCoord  mHeight;                // [reset] coord, percent, auto
   nsStyleCoord  mMinHeight;             // [reset] coord, percent
   nsStyleCoord  mMaxHeight;             // [reset] coord, percent, null
@@ -662,7 +660,7 @@ struct nsStyleTextReset : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleTextReset();
     aContext->FreeToShell(sizeof(nsStyleTextReset), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleTextReset& aOther) const;
 #ifdef DEBUG
@@ -686,7 +684,7 @@ struct nsStyleText : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleText();
     aContext->FreeToShell(sizeof(nsStyleText), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleText& aOther) const;
 #ifdef DEBUG
@@ -716,7 +714,7 @@ struct nsStyleText : public nsStyleStruct {
 struct nsStyleVisibility : public nsStyleStruct {
   nsStyleVisibility(nsPresContext* aPresContext);
   nsStyleVisibility(const nsStyleVisibility& aVisibility);
-  ~nsStyleVisibility() {};
+  ~nsStyleVisibility() {}
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
     return aContext->AllocateFromShell(sz);
@@ -724,7 +722,7 @@ struct nsStyleVisibility : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleVisibility();
     aContext->FreeToShell(sizeof(nsStyleVisibility), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleVisibility& aOther) const;
 #ifdef DEBUG
@@ -748,7 +746,7 @@ struct nsStyleVisibility : public nsStyleStruct {
 struct nsStyleDisplay : public nsStyleStruct {
   nsStyleDisplay();
   nsStyleDisplay(const nsStyleDisplay& aOther); 
-  ~nsStyleDisplay() {};
+  ~nsStyleDisplay() {}
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
     return aContext->AllocateFromShell(sz);
@@ -756,7 +754,7 @@ struct nsStyleDisplay : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleDisplay();
     aContext->FreeToShell(sizeof(nsStyleDisplay), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleDisplay& aOther) const;
 #ifdef DEBUG
@@ -785,11 +783,6 @@ struct nsStyleDisplay : public nsStyleStruct {
   PRUint8 mOverflowY;           // [reset] see nsStyleConsts.h
   PRUint8   mClipFlags;         // [reset] see nsStyleConsts.h
   
-  // XXX Deprecated.  Prefer |IsBlockOutside|.
-  PRBool IsBlockLevel() const {
-    return IsBlockOutside();
-  }
-
   PRBool IsBlockInside() const {
     return NS_STYLE_DISPLAY_BLOCK == mDisplay ||
            NS_STYLE_DISPLAY_LIST_ITEM == mDisplay ||
@@ -811,11 +804,7 @@ struct nsStyleDisplay : public nsStyleStruct {
            NS_STYLE_DISPLAY_INLINE_TABLE == mDisplay ||
            NS_STYLE_DISPLAY_INLINE_BOX == mDisplay ||
            NS_STYLE_DISPLAY_INLINE_GRID == mDisplay ||
-           NS_STYLE_DISPLAY_INLINE_STACK == mDisplay ||
-           // Are these really inlines? :
-           NS_STYLE_DISPLAY_DECK == mDisplay ||
-           NS_STYLE_DISPLAY_POPUP == mDisplay ||
-           NS_STYLE_DISPLAY_GROUPBOX == mDisplay;
+           NS_STYLE_DISPLAY_INLINE_STACK == mDisplay;
   }
 
   PRBool IsFloating() const {
@@ -855,7 +844,7 @@ struct nsStyleTable: public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleTable();
     aContext->FreeToShell(sizeof(nsStyleTable), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleTable& aOther) const;
 #ifdef DEBUG
@@ -880,7 +869,7 @@ struct nsStyleTableBorder: public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleTableBorder();
     aContext->FreeToShell(sizeof(nsStyleTableBorder), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleTableBorder& aOther) const;
 #ifdef DEBUG
@@ -946,7 +935,7 @@ struct nsStyleQuotes : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleQuotes();
     aContext->FreeToShell(sizeof(nsStyleQuotes), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleQuotes& aOther) const;
 #ifdef DEBUG
@@ -1016,7 +1005,7 @@ struct nsStyleContent: public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleContent();
     aContext->FreeToShell(sizeof(nsStyleContent), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleContent& aOther) const;
 #ifdef DEBUG
@@ -1121,7 +1110,7 @@ struct nsStyleUIReset: public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleUIReset();
     aContext->FreeToShell(sizeof(nsStyleUIReset), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleUIReset& aOther) const;
 #ifdef DEBUG
@@ -1130,6 +1119,7 @@ struct nsStyleUIReset: public nsStyleStruct {
 
   PRUint8   mUserSelect;      // [reset] (selection-style)
   PRUint8   mForceBrokenImageIcon; // [reset]  (0 if not forcing, otherwise forcing)
+  PRUint8   mIMEMode;         // [reset]
 };
 
 struct nsCursorImage {
@@ -1151,7 +1141,7 @@ struct nsStyleUserInterface: public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleUserInterface();
     aContext->FreeToShell(sizeof(nsStyleUserInterface), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleUserInterface& aOther) const;
 #ifdef DEBUG
@@ -1186,7 +1176,7 @@ struct nsStyleXUL : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleXUL();
     aContext->FreeToShell(sizeof(nsStyleXUL), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleXUL& aOther) const;
 #ifdef DEBUG
@@ -1212,7 +1202,7 @@ struct nsStyleColumn : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleColumn();
     aContext->FreeToShell(sizeof(nsStyleColumn), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleColumn& aOther) const;
 #ifdef DEBUG
@@ -1262,7 +1252,7 @@ struct nsStyleSVG : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleSVG();
     aContext->FreeToShell(sizeof(nsStyleSVG), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleSVG& aOther) const;
 #ifdef DEBUG
@@ -1307,7 +1297,7 @@ struct nsStyleSVGReset : public nsStyleStruct {
   void Destroy(nsPresContext* aContext) {
     this->~nsStyleSVGReset();
     aContext->FreeToShell(sizeof(nsStyleSVGReset), this);
-  };
+  }
 
   nsChangeHint CalcDifference(const nsStyleSVGReset& aOther) const;
 #ifdef DEBUG

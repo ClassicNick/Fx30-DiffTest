@@ -44,7 +44,7 @@
 #include "nsGkAtoms.h"
 #include "nsILinkHandler.h"
 #include "nsILink.h"
-#include "nsIXMLContent.h"
+#include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsINameSpaceManager.h"
 #include "nsIURI.h"
@@ -221,13 +221,12 @@ nsStyleUtil::CalcFontPointSize(PRInt32 aHTMLSize, PRInt32 aBasePointSize,
 
   // Make special call specifically for fonts (needed PrintPreview)
   PRInt32 fontSize = NSTwipsToIntPixels(aBasePointSize,
-                                        aPresContext->TwipsToPixelsForFonts());
+-                                        aPresContext->TwipsToPixelsForFonts());
 
   if ((fontSize >= sFontSizeTableMin) && (fontSize <= sFontSizeTableMax))
   {
-    float p2t;
+	  float p2t;
     p2t = aPresContext->PixelsToTwips();
-
     PRInt32 row = fontSize - sFontSizeTableMin;
 
 	  if (aPresContext->CompatibilityMode() == eCompatibility_NavQuirks) {
@@ -274,7 +273,7 @@ nscoord nsStyleUtil::FindNextSmallerFontSize(nscoord aFontSize, PRInt32 aBasePoi
   
   p2t = aPresContext->PixelsToTwips();
   onePx = NSToCoordRound(p2t);
-    
+
 	if (aFontSizeType == eFontSize_HTML) {
 		indexMin = 1;
 		indexMax = 7;
@@ -342,7 +341,7 @@ nscoord nsStyleUtil::FindNextLargerFontSize(nscoord aFontSize, PRInt32 aBasePoin
   
   p2t = aPresContext->PixelsToTwips();
   onePx = NSToCoordRound(p2t);
-    
+
 	if (aFontSizeType == eFontSize_HTML) {
 		indexMin = 1;
 		indexMax = 7;
@@ -384,7 +383,7 @@ nscoord nsStyleUtil::FindNextLargerFontSize(nscoord aFontSize, PRInt32 aBasePoin
   else { // smaller than HTML table, increase by 1px
     float p2t;
     p2t = aPresContext->PixelsToTwips();
-    largerSize = aFontSize + NSToCoordRound(p2t); 
+    largerSize = aFontSize + NSToCoordRound(p2t);
   }
   return largerSize;
 }

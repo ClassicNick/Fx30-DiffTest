@@ -63,8 +63,7 @@
 
 inline PRBool IsFixedUnit(nsStyleUnit aUnit, PRBool aEnumOK)
 {
-  return PRBool((aUnit == eStyleUnit_Null) || 
-                (aUnit == eStyleUnit_Coord) || 
+  return PRBool((aUnit == eStyleUnit_Coord) || 
                 (aEnumOK && (aUnit == eStyleUnit_Enumerated)));
 }
 
@@ -198,8 +197,6 @@ static nscoord CalcCoord(const nsStyleCoord& aCoord,
                          PRInt32 aNumEnums)
 {
   switch (aCoord.GetUnit()) {
-    case eStyleUnit_Null:
-      return 0;
     case eStyleUnit_Coord:
       return aCoord.GetCoordValue();
     case eStyleUnit_Enumerated:
@@ -222,7 +219,10 @@ static nscoord CalcCoord(const nsStyleCoord& aCoord,
 }
 
 nsStyleMargin::nsStyleMargin() {
-  mMargin.Reset();
+  nsStyleCoord zero(0);
+  NS_FOR_CSS_SIDES(side) {
+    mMargin.Set(side, zero);
+  }
   mHasCachedMargin = PR_FALSE;
 }
 
@@ -277,7 +277,10 @@ nsChangeHint nsStyleMargin::MaxDifference()
 #endif
 
 nsStylePadding::nsStylePadding() {
-  mPadding.Reset();
+  nsStyleCoord zero(0);
+  NS_FOR_CSS_SIDES(side) {
+    mPadding.Set(side, zero);
+  }
   mHasCachedPadding = PR_FALSE;
 }
 
@@ -858,10 +861,10 @@ nsStylePosition::nsStylePosition(void)
   mOffset.SetBottom(autoCoord);
   mWidth.SetAutoValue();
   mMinWidth.SetCoordValue(0);
-  mMaxWidth.Reset();
+  mMaxWidth.SetNoneValue();
   mHeight.SetAutoValue();
   mMinHeight.SetCoordValue(0);
-  mMaxHeight.Reset();
+  mMaxHeight.SetNoneValue();
   mBoxSizing = NS_STYLE_BOX_SIZING_CONTENT;
   mZIndex.SetAutoValue();
 }
@@ -1067,14 +1070,6 @@ nsStyleBackground::~nsStyleBackground()
 
 nsChangeHint nsStyleBackground::CalcDifference(const nsStyleBackground& aOther) const
 {
-  if (mBackgroundAttachment != aOther.mBackgroundAttachment
-    && ((NS_STYLE_BG_ATTACHMENT_FIXED == mBackgroundAttachment) ||
-        (NS_STYLE_BG_ATTACHMENT_FIXED == aOther.mBackgroundAttachment)))
-    // this might require creation of a view
-    // XXX This probably doesn't call ApplyRenderingChangeToTree, which
-    // means we might not invalidate the canvas if this is the body.
-    return NS_STYLE_HINT_FRAMECHANGE;
-
   if ((mBackgroundAttachment == aOther.mBackgroundAttachment) &&
       (mBackgroundFlags == aOther.mBackgroundFlags) &&
       (mBackgroundRepeat == aOther.mBackgroundRepeat) &&
@@ -1099,7 +1094,7 @@ nsChangeHint nsStyleBackground::CalcDifference(const nsStyleBackground& aOther) 
 /* static */
 nsChangeHint nsStyleBackground::MaxDifference()
 {
-  return NS_STYLE_HINT_FRAMECHANGE;
+  return NS_STYLE_HINT_VISUAL;
 }
 #endif
 
@@ -1157,15 +1152,20 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       || mDisplay != aOther.mDisplay
       || (mFloats == NS_STYLE_FLOAT_NONE) != (aOther.mFloats == NS_STYLE_FLOAT_NONE)
       || mOverflowX != aOther.mOverflowX
-      || mOverflowY != aOther.mOverflowY
-      // might need to create a view to handle change from 1.0 to partial opacity
-      || (mOpacity != aOther.mOpacity
-          && ((mOpacity < 1.0) != (aOther.mOpacity < 1.0))))
+      || mOverflowY != aOther.mOverflowY)
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
 
   if (mFloats != aOther.mFloats)
     NS_UpdateHint(hint, nsChangeHint_ReflowFrame);    
 
+  if (mClipFlags != aOther.mClipFlags || mClip != aOther.mClip) {
+    NS_UpdateHint(hint, nsChangeHint_ReflowFrame);
+    // The reflow code in naAbsoluteContainingBlock can deal with invalidation
+    // in all cases except changing from non-auto clip to auto clip; when
+    // changing to auto clip, the frame can't tell what happened
+    if (mClipFlags == NS_STYLE_CLIP_AUTO)
+      NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
+  }
   // XXX the following is conservative, for now: changing float breaking shouldn't
   // necessarily require a repaint, reflow should suffice.
   if (mBreakType != aOther.mBreakType
@@ -1174,10 +1174,8 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       || mAppearance != aOther.mAppearance)
     NS_UpdateHint(hint, NS_CombineHint(nsChangeHint_ReflowFrame, nsChangeHint_RepaintFrame));
 
-  if (mClipFlags != aOther.mClipFlags
-      || mClip != aOther.mClip
-      || mOpacity != aOther.mOpacity)
-    NS_UpdateHint(hint, nsChangeHint_SyncFrameView);
+  if (mOpacity != aOther.mOpacity)
+    NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
 
   return hint;
 }
@@ -1306,6 +1304,7 @@ nsStyleContent::nsStyleContent(void)
     mResetCount(0),
     mResets(nsnull)
 {
+  mMarkerOffset.SetAutoValue();
 }
 
 nsStyleContent::~nsStyleContent(void)
@@ -1644,12 +1643,14 @@ nsStyleUIReset::nsStyleUIReset(void)
 { 
   mUserSelect = NS_STYLE_USER_SELECT_AUTO;
   mForceBrokenImageIcon = 0;
+  mIMEMode = NS_STYLE_IME_MODE_AUTO;
 }
 
 nsStyleUIReset::nsStyleUIReset(const nsStyleUIReset& aSource) 
 {
   mUserSelect = aSource.mUserSelect;
   mForceBrokenImageIcon = aSource.mForceBrokenImageIcon;
+  mIMEMode = aSource.mIMEMode;
 }
 
 nsStyleUIReset::~nsStyleUIReset(void) 
@@ -1658,6 +1659,7 @@ nsStyleUIReset::~nsStyleUIReset(void)
 
 nsChangeHint nsStyleUIReset::CalcDifference(const nsStyleUIReset& aOther) const
 {
+  // ignore mIMEMode
   if (mForceBrokenImageIcon == aOther.mForceBrokenImageIcon) {
     if (mUserSelect == aOther.mUserSelect) {
       return NS_STYLE_HINT_NONE;
