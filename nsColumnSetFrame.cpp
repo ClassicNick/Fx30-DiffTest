@@ -270,8 +270,7 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState)
     }
 
     // Compute extra space and divide it among the columns
-    nscoord extraSpace =
-      PR_MAX(0, availContentWidth - (colWidth*numColumns + colGap*(numColumns - 1)));
+    nscoord extraSpace = availContentWidth - (colWidth*numColumns + colGap*(numColumns - 1));
     nscoord extraToColumns = extraSpace/numColumns;
     colWidth += extraToColumns;
     expectedWidthLeftOver = extraSpace - (extraToColumns*numColumns);
@@ -335,7 +334,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
                                  nsCollapsingMargin*      aBottomMarginCarriedOut) {
   PRBool allFit = PR_TRUE;
   PRBool RTL = GetStyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL;
-  PRBool shrinkingHeightOnly = !NS_SUBTREE_DIRTY(this) &&
+  PRBool shrinkingHeightOnly = !(GetStateBits() & (NS_FRAME_IS_DIRTY|NS_FRAME_HAS_DIRTY_CHILDREN)) &&
     mLastBalanceHeight > aConfig.mColMaxHeight;
   
 #ifdef DEBUG_roc
@@ -428,7 +427,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
       if (reflowNext)
         child->AddStateBits(NS_FRAME_IS_DIRTY);
 
-      nsHTMLReflowState kidReflowState(PresContext(), aReflowState, child,
+      nsHTMLReflowState kidReflowState(GetPresContext(), aReflowState, child,
                                        availSize, availSize.width,
                                        aReflowState.mComputedHeight);
       kidReflowState.mFlags.mIsTopOfPage = PR_TRUE;
@@ -457,7 +456,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
       // columns would flow around it.
 
       // Reflow the frame
-      ReflowChild(child, PresContext(), kidDesiredSize, kidReflowState,
+      ReflowChild(child, GetPresContext(), kidDesiredSize, kidReflowState,
                   childOrigin.x + kidReflowState.mComputedMargin.left,
                   childOrigin.y + kidReflowState.mComputedMargin.top,
                   0, aStatus);
@@ -477,7 +476,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
 
       *aBottomMarginCarriedOut = kidDesiredSize.mCarriedOutBottomMargin;
       
-      FinishReflowChild(child, PresContext(), &kidReflowState, 
+      FinishReflowChild(child, GetPresContext(), &kidReflowState, 
                         kidDesiredSize, childOrigin.x, childOrigin.y, 0);
     }
 
@@ -502,7 +501,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
                      "We have to create a continuation, but the block doesn't want us to reflow it?");
 
         // We need to create a continuing column
-        nsresult rv = CreateNextInFlow(PresContext(), this, child, kidNextInFlow);
+        nsresult rv = CreateNextInFlow(GetPresContext(), this, child, kidNextInFlow);
         
         if (NS_FAILED(rv)) {
           NS_NOTREACHED("Couldn't create continuation");
@@ -519,7 +518,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
         // next-in-flow will eventually pick them up.
         nsIFrame* continuationColumns = child->GetNextSibling();
         if (continuationColumns) {
-          SetOverflowFrames(PresContext(), continuationColumns);
+          SetOverflowFrames(GetPresContext(), continuationColumns);
           child->SetNextSibling(nsnull);
         }
         break;
@@ -617,7 +616,7 @@ nsColumnSetFrame::DrainOverflowColumns()
   // frame.
   nsColumnSetFrame* prev = NS_STATIC_CAST(nsColumnSetFrame*, GetPrevInFlow());
   if (prev) {
-    nsIFrame* overflows = prev->GetOverflowFrames(PresContext(), PR_TRUE);
+    nsIFrame* overflows = prev->GetOverflowFrames(GetPresContext(), PR_TRUE);
     if (overflows) {
       // Make all the frames on the overflow list mine
       nsIFrame* lastFrame = nsnull;
@@ -626,7 +625,7 @@ nsColumnSetFrame::DrainOverflowColumns()
 
         // When pushing and pulling frames we need to check for whether any
         // views need to be reparented
-        nsHTMLContainerFrame::ReparentFrameView(PresContext(), f, prev, this);
+        nsHTMLContainerFrame::ReparentFrameView(GetPresContext(), f, prev, this);
 
         // Get the next frame
         lastFrame = f;
@@ -641,7 +640,7 @@ nsColumnSetFrame::DrainOverflowColumns()
   
   // Now pull back our own overflows and append them to our children.
   // We don't need to reparent them since we're already their parent.
-  nsIFrame* overflows = GetOverflowFrames(PresContext(), PR_TRUE);
+  nsIFrame* overflows = GetOverflowFrames(GetPresContext(), PR_TRUE);
   if (overflows) {
     mFrames.AppendFrames(this, overflows);
   }
@@ -804,7 +803,7 @@ nsColumnSetFrame::Reflow(nsPresContext*          aPresContext,
     }
   }
   
-  CheckInvalidateSizeChange(PresContext(), aDesiredSize, aReflowState);
+  CheckInvalidateSizeChange(GetPresContext(), aDesiredSize, aReflowState);
 
   FinishAndStoreOverflow(&aDesiredSize);
   aDesiredSize.mCarriedOutBottomMargin = carriedOutBottomMargin;

@@ -131,9 +131,6 @@ public:
 
   virtual void Destroy();
 
-  virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
-  virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
-
   NS_IMETHOD Reflow(nsPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
@@ -234,7 +231,7 @@ nsSubDocumentFrame::Init(nsIContent*     aContent,
   if (NS_FAILED(rv))
     return rv;
     
-  nsPresContext *aPresContext = PresContext();
+  nsPresContext *aPresContext = GetPresContext();
 
   // We are going to create an inner view.  If we need a view for the
   // OuterFrame but we wait for the normal view creation path in
@@ -328,13 +325,13 @@ nsSubDocumentFrame::GetIntrinsicWidth()
     return 0;  // <frame> has no useful intrinsic width
   }
 
-  if (!mContent->IsNodeOfType(nsINode::eXUL)) {
+  if (mContent->IsNodeOfType(nsINode::eXUL)) {
     return 0;  // <xul:iframe> also has no useful intrinsic width
   }
 
   // We must be an HTML <iframe>.  Default to a width of 300, for IE
   // compat (and per CSS2.1 draft).
-  return NSIntPixelsToTwips(300, PresContext()->ScaledPixelsToTwips());
+  return NSIntPixelsToTwips(300, GetPresContext()->ScaledPixelsToTwips());
 }
 
 nscoord
@@ -349,7 +346,7 @@ nsSubDocumentFrame::GetIntrinsicHeight()
 
   // Use 150px, for compatibility with IE, and per CSS2.1 draft.
   return NSIntPixelsToTwips(150,
--                            PresContext()->ScaledPixelsToTwips());
+                            GetPresContext()->ScaledPixelsToTwips());
 }
 
 #ifdef DEBUG
@@ -363,25 +360,6 @@ nsIAtom*
 nsSubDocumentFrame::GetType() const
 {
   return nsGkAtoms::subDocumentFrame;
-}
-
-/* virtual */ nscoord
-nsSubDocumentFrame::GetMinWidth(nsIRenderingContext *aRenderingContext)
-{
-  return nsSubDocumentFrame::GetPrefWidth(aRenderingContext);
-}
-
-/* virtual */ nscoord
-nsSubDocumentFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
-{
-      // XUL frames don't have a default 300px width
-  nscoord result;
-  DISPLAY_PREF_WIDTH(this, result);
-  if (mContent->IsNodeOfType(nsINode::eXUL))
-    result = 0;
-  else
-    result = NSIntPixelsToTwips(300, PresContext()->ScaledPixelsToTwips());
-  return result;
 }
 
 NS_IMETHODIMP
@@ -429,10 +407,7 @@ nsSubDocumentFrame::Reflow(nsPresContext*          aPresContext,
   // Determine if we need to repaint our border, background or outline
   CheckInvalidateSizeChange(aPresContext, aDesiredSize, aReflowState);
 
-  FinishAndStoreOverflow(&aDesiredSize);
-
   // Invalidate the frame contents
-  // XXX is this really needed?
   nsRect rect(nsPoint(0, 0), GetSize());
   Invalidate(rect, PR_FALSE);
 
@@ -444,7 +419,7 @@ nsSubDocumentFrame::Reflow(nsPresContext*          aPresContext,
 
     // resize the sub document
     if (baseWindow) {
-		float t2p;
+      float t2p;
       t2p = aPresContext->TwipsToPixels();
       PRInt32 x = 0;
       PRInt32 y = 0;

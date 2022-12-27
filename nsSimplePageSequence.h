@@ -103,7 +103,7 @@ public:
   NS_IMETHOD SetTotalNumPages(PRInt32 aTotal) { mTotalPages = aTotal; return NS_OK; }
 
   // Gets the dead space (the gray area) around the Print Preview Page
-  NS_IMETHOD GetDeadSpaceValue(nscoord* aValue) { *aValue = NS_INCHES_TO_TWIPS(0.25); return NS_OK; }
+  NS_IMETHOD GetDeadSpaceValue(nscoord* aValue) { *aValue = NS_INCHES_TO_TWIPS(0.25); return NS_OK; };
   
   // For Shrink To Fit
   NS_IMETHOD GetSTFPercent(float& aSTFPercent);
@@ -130,10 +130,6 @@ public:
 #ifdef NS_DEBUG
   NS_IMETHOD  GetFrameName(nsAString& aResult) const;
 #endif
-
-  void PaintPageSequence(nsIRenderingContext& aRenderingContext,
-                         const nsRect&        aDirtyRect,
-                         nsPoint              aPt);
 
 protected:
   nsSimplePageSequenceFrame(nsStyleContext* aContext);

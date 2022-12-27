@@ -66,8 +66,6 @@ public:
 
   virtual PRBool IsFrameOfType(PRUint32 aFlags) const
   {
-    if (!GetStyleDisplay()->IsFloating())
-      aFlags = aFlags & ~(nsIFrame::eLineParticipant);
     return nsFirstLetterFrameSuper::IsFrameOfType(aFlags &
       ~(nsIFrame::eBidiInlineContainer));
   }
@@ -152,7 +150,7 @@ nsFirstLetterFrame::SetInitialChildList(nsIAtom*  aListName,
                                         nsIFrame* aChildList)
 {
   mFrames.SetFrames(aChildList);
-  nsFrameManager *frameManager = PresContext()->FrameManager();
+  nsFrameManager *frameManager = GetPresContext()->FrameManager();
 
   for (nsIFrame* frame = aChildList; frame; frame = frame->GetNextSibling()) {
     NS_ASSERTION(frame->GetParent() == this, "Unexpected parent");

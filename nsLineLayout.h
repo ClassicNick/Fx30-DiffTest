@@ -311,6 +311,10 @@ public:
 
   //----------------------------------------
 
+  static PRBool TreatFrameAsBlock(nsIFrame* aFrame);
+
+  //----------------------------------------
+
   nsPresContext* mPresContext;
 
   /**
@@ -403,13 +407,6 @@ public:
   const nsLineList::iterator* GetLine() const {
     return GetFlag(LL_GOTLINEBOX) ? &mLineBox : nsnull;
   }
-  
-  /**
-   * Return the horizontal offset of the current reflowed-frame from the 
-   * edge of the line container. This is always positive, measured from
-   * the right edge for RTL blocks and from the left edge for LTR blocks.
-   */
-  nscoord GetCurrentFrameXDistanceFromBlock();
 
 protected:
   // This state is constant for a given block frame doing line layout
@@ -604,7 +601,6 @@ protected:
                        const nsHTMLReflowState& aReflowState,
                        PRBool aNotSafeToBreak,
                        PRBool aFrameCanContinueTextRun,
-                       PRBool aCanRollBackBeforeFrame,
                        nsHTMLReflowMetrics& aMetrics,
                        nsReflowStatus& aStatus);
 

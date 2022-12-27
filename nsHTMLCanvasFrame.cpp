@@ -76,10 +76,9 @@ nsHTMLCanvasFrame::GetCanvasSize()
     h = w = 1;
   }
 
-  float p2t = PresContext()->PixelsToTwips();
-  return nsSize(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
+  float p2t = GetPresContext()->PixelsToTwips();
 
-  return nsSize(w, h);
+  return nsSize(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
 }
 
 /* virtual */ nscoord
@@ -103,12 +102,6 @@ nsHTMLCanvasFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
 }
 
 /* virtual */ nsSize
-nsHTMLCanvasFrame::GetIntrinsicRatio()
-{
-  return GetCanvasSize();
-}
-
-/* virtual */ nsSize
 nsHTMLCanvasFrame::ComputeSize(nsIRenderingContext *aRenderingContext,
                                nsSize aCBSize, nscoord aAvailableWidth,
                                nsSize aMargin, nsSize aBorder, nsSize aPadding,
@@ -118,7 +111,7 @@ nsHTMLCanvasFrame::ComputeSize(nsIRenderingContext *aRenderingContext,
 
   return nsLayoutUtils::ComputeSizeWithIntrinsicDimensions(
                             aRenderingContext, this, canvasSize,
-                            aCBSize, aMargin, aBorder, aPadding);
+                            aCBSize, aBorder, aPadding);
 }
 
 NS_IMETHODIMP

@@ -248,6 +248,37 @@ nsFrameList::Split(nsIFrame* aAfterFrame, nsIFrame** aNextFrameResult)
 }
 
 nsIFrame*
+nsFrameList::PullFrame(nsIFrame* aParent,
+                       nsIFrame* aLastChild,
+                       nsFrameList& aFromList)
+{
+  NS_PRECONDITION(nsnull != aParent, "null ptr");
+
+  nsIFrame* pulledFrame = nsnull;
+  if (nsnull != aParent) {
+    pulledFrame = aFromList.FirstChild();
+    if (nsnull != pulledFrame) {
+      // Take frame off old list
+      aFromList.RemoveFirstChild();
+
+      // Put it on the end of this list
+      if (nsnull == aLastChild) {
+        NS_ASSERTION(nsnull == mFirstChild, "bad aLastChild");
+        mFirstChild = pulledFrame;
+      }
+      else {
+        aLastChild->SetNextSibling(pulledFrame);
+      }
+      pulledFrame->SetParent(aParent);
+    }
+  }
+#ifdef DEBUG
+  CheckForLoops();
+#endif
+  return pulledFrame;
+}
+
+nsIFrame*
 nsFrameList::LastChild() const
 {
   nsIFrame* frame = mFirstChild;
@@ -412,7 +443,7 @@ nsFrameList::GetPrevVisualFor(nsIFrame* aFrame) const
     return aFrame ? GetPrevSiblingFor(aFrame) : LastChild();
 
   nsBidiLevel baseLevel = nsBidiPresUtils::GetFrameBaseLevel(mFirstChild);  
-  nsBidiPresUtils* bidiUtils = mFirstChild->PresContext()->GetBidiUtils();
+  nsBidiPresUtils* bidiUtils = mFirstChild->GetPresContext()->GetBidiUtils();
 
   nsresult result = parent->QueryInterface(NS_GET_IID(nsILineIterator), (void**)&iter);
   if (NS_FAILED(result) || !iter) { 
@@ -489,7 +520,7 @@ nsFrameList::GetNextVisualFor(nsIFrame* aFrame) const
     return aFrame ? GetPrevSiblingFor(aFrame) : mFirstChild;
 
   nsBidiLevel baseLevel = nsBidiPresUtils::GetFrameBaseLevel(mFirstChild);
-  nsBidiPresUtils* bidiUtils = mFirstChild->PresContext()->GetBidiUtils();
+  nsBidiPresUtils* bidiUtils = mFirstChild->GetPresContext()->GetBidiUtils();
   
   nsresult result = parent->QueryInterface(NS_GET_IID(nsILineIterator), (void**)&iter);
   if (NS_FAILED(result) || !iter) { 

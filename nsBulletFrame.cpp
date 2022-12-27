@@ -361,7 +361,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
   case NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_AM:
   case NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_TI_ER:
   case NS_STYLE_LIST_STYLE_MOZ_ETHIOPIC_HALEHAME_TI_ET:
-    fm = PresContext()->GetMetricsFor(myFont->mFont);
+    fm = GetPresContext()->GetMetricsFor(myFont->mFont);
 #ifdef IBMBIDI
     // If we can't render our numeral using the chars in the numbering
     // system, we'll be using "decimal"...
@@ -382,7 +382,7 @@ nsBulletFrame::PaintBullet(nsIRenderingContext& aRenderingContext, nsPoint aPt,
   }
 #ifdef IBMBIDI
   if (charType != eCharType_LeftToRight) {
-    nsPresContext* presContext = PresContext();
+    nsPresContext* presContext = GetPresContext();
     fm = presContext->GetMetricsFor(myFont->mFont);
     aRenderingContext.SetFont(fm);
     nscoord ascent;
@@ -1463,8 +1463,6 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
   const nsStyleFont* myFont = GetStyleFont();
   nsCOMPtr<nsIFontMetrics> fm = aCX->GetMetricsFor(myFont->mFont);
   nscoord bulletSize;
-  float p2t;
-  float t2p;
 
   nsAutoString text;
   switch (myList->mListStyleType) {
@@ -1476,8 +1474,10 @@ nsBulletFrame::GetDesiredSize(nsPresContext*  aCX,
     case NS_STYLE_LIST_STYLE_DISC:
     case NS_STYLE_LIST_STYLE_CIRCLE:
     case NS_STYLE_LIST_STYLE_SQUARE:
+		float p2t;
+		float t2p;
       t2p = aCX->TwipsToPixels();
-       fm->GetMaxAscent(ascent);
+      fm->GetMaxAscent(ascent);
       bulletSize = NSTwipsToIntPixels(
         (nscoord)NSToIntRound(0.8f * (float(ascent) / 2.0f)), t2p);
       if (bulletSize < MIN_BULLET_SIZE) {
@@ -1581,7 +1581,7 @@ nsBulletFrame::GetMinWidth(nsIRenderingContext *aRenderingContext)
 {
   nsHTMLReflowMetrics metrics;
   DISPLAY_MIN_WIDTH(this, metrics.width);
-  GetDesiredSize(PresContext(), aRenderingContext, metrics);
+  GetDesiredSize(GetPresContext(), aRenderingContext, metrics);
   return metrics.width;
 }
 
@@ -1590,7 +1590,7 @@ nsBulletFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
 {
   nsHTMLReflowMetrics metrics;
   DISPLAY_PREF_WIDTH(this, metrics.width);
-  GetDesiredSize(PresContext(), aRenderingContext, metrics);
+  GetDesiredSize(GetPresContext(), aRenderingContext, metrics);
   return metrics.width;
 }
 
@@ -1612,9 +1612,9 @@ NS_IMETHODIMP nsBulletFrame::OnStartContainer(imgIRequest *aRequest,
   aImage->GetHeight(&h);
 
   float p2t;
-   nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   p2t = presContext->PixelsToTwips();
- 
+
   nsSize newsize(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
 
   if (mIntrinsicSize != newsize) {
@@ -1624,8 +1624,11 @@ NS_IMETHODIMP nsBulletFrame::OnStartContainer(imgIRequest *aRequest,
     // a reflow of the bullet frame.
     nsIPresShell *shell = presContext->GetPresShell();
     if (shell) {
-      shell->FrameNeedsReflow(this, nsIPresShell::eStyleChange,
-                              NS_FRAME_IS_DIRTY);
+      NS_ASSERTION(mParent, "No parent to pass the reflow request up to.");
+      if (mParent) {
+        mState |= NS_FRAME_IS_DIRTY;
+        shell->FrameNeedsReflow(this, nsIPresShell::eStyleChange);
+      }
     }
   }
 

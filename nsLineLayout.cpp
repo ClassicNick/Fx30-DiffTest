@@ -249,9 +249,6 @@ nsLineLayout::BeginLineReflow(nscoord aX, nscoord aY,
       if ((0 != width) && (NS_UNCONSTRAINEDSIZE != width)) {
         indent = nscoord(mStyleText->mTextIndent.GetPercentValue() * width);
       }
-      if (GetFlag(LL_GOTLINEBOX)) {
-        mLineBox->DisableResizeReflowOptimization();
-      }
     }
 
     mTextIndent = indent;
@@ -704,16 +701,6 @@ HasPercentageUnitSide(const nsStyleSides& aSides)
   return PR_FALSE;
 }
 
-inline PRBool
-WidthDependsOnContainer(const nsStyleCoord& aCoord)
-{
-  return aCoord.GetUnit() == eStyleUnit_Percent ||
-         (aCoord.GetUnit() == eStyleUnit_Enumerated &&
-          (aCoord.GetIntValue() == NS_STYLE_WIDTH_FILL ||
-           aCoord.GetIntValue() == NS_STYLE_WIDTH_SHRINK_WRAP));
-
-}
-
 static PRBool
 IsPercentageAware(const nsIFrame* aFrame)
 {
@@ -745,9 +732,9 @@ IsPercentageAware(const nsIFrame* aFrame)
 
   const nsStylePosition* pos = aFrame->GetStylePosition();
 
-  if (WidthDependsOnContainer(pos->mWidth) ||
-      WidthDependsOnContainer(pos->mMaxWidth) ||
-      WidthDependsOnContainer(pos->mMinWidth) ||
+  if (eStyleUnit_Percent == pos->mWidth.GetUnit() ||
+      eStyleUnit_Percent == pos->mMaxWidth.GetUnit() ||
+      eStyleUnit_Percent == pos->mMinWidth.GetUnit() ||
       eStyleUnit_Percent == pos->mOffset.GetRightUnit() ||
       eStyleUnit_Percent == pos->mOffset.GetLeftUnit()) {
     return PR_TRUE;
@@ -917,12 +904,16 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
       if (outOfFlowFrame) {
         nsPlaceholderFrame* placeholder = NS_STATIC_CAST(nsPlaceholderFrame*, aFrame);
         // XXXldb What is this test supposed to be?
-        if (!NS_SUBTREE_DIRTY(aFrame)) {
+        if (!(aFrame->GetStateBits() &
+              (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN))) {
           // incremental reflow of child
           placedFloat = InitFloat(placeholder, aReflowStatus);
         }
         else {
           placedFloat = AddFloat(placeholder, aReflowStatus);
+        }
+        if (!placedFloat) {
+          aReflowStatus = NS_INLINE_LINE_BREAK_BEFORE();
         }
         if (outOfFlowFrame->GetType() == nsGkAtoms::letterFrame) {
           SetFlag(LL_FIRSTLETTERSTYLEOK, PR_FALSE);
@@ -1038,8 +1029,7 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
     // See if we can place the frame. If we can't fit it, then we
     // return now.
     if (CanPlaceFrame(pfd, reflowState, notSafeToBreak, continuingTextRun,
-                      savedOptionalBreakContent != nsnull, metrics,
-                      aReflowStatus)) {
+                      metrics, aReflowStatus)) {
       // Place the frame, updating aBounds with the final size and
       // location.  Then apply the bottom+right margins (as
       // appropriate) to the frame.
@@ -1142,17 +1132,6 @@ nsLineLayout::ApplyStartMargin(PerFrameData* pfd,
   }
 }
 
-nscoord
-nsLineLayout::GetCurrentFrameXDistanceFromBlock()
-{
-  PerSpanData* psd;
-  nscoord x = 0;
-  for (psd = mCurrentSpan; psd; psd = psd->mParent) {
-    x += psd->mX;
-  }
-  return x;
-}
-
 /**
  * See if the frame can be placed now that we know it's desired size.
  * We can always place the frame if the line is empty. Note that we
@@ -1168,7 +1147,6 @@ nsLineLayout::CanPlaceFrame(PerFrameData* pfd,
                             const nsHTMLReflowState& aReflowState,
                             PRBool aNotSafeToBreak,
                             PRBool aFrameCanContinueTextRun,
-                            PRBool aCanRollBackBeforeFrame,
                             nsHTMLReflowMetrics& aMetrics,
                             nsReflowStatus& aStatus)
 {
@@ -1301,7 +1279,7 @@ nsLineLayout::CanPlaceFrame(PerFrameData* pfd,
 #ifdef NOISY_CAN_PLACE_FRAME
     printf("   ==> placing overflowing textrun, requesting backup\n");
 #endif
-    if (!aCanRollBackBeforeFrame) {
+    if (!mLastOptionalBreakContent) {
       // Nowhere to roll back to, so make this fit
       return PR_TRUE;
     }
@@ -1627,7 +1605,7 @@ nsLineLayout::VerticalAlignFrames(PerSpanData* psd)
   // Get the parent frame's font for all of the frames in this span
   nsStyleContext* styleContext = spanFrame->GetStyleContext();
   nsIRenderingContext* rc = mBlockReflowState->rendContext;
-  nsLayoutUtils::SetFontFromStyle(mBlockReflowState->rendContext, styleContext);
+  SetFontFromStyle(mBlockReflowState->rendContext, styleContext);
   nsCOMPtr<nsIFontMetrics> fm;
   rc->GetFontMetrics(*getter_AddRefs(fm));
 
@@ -1760,7 +1738,8 @@ nsLineLayout::VerticalAlignFrames(PerSpanData* psd)
     // Compute the logical height for this span. The logical height
     // is based on the line-height value, not the font-size. Also
     // compute the top leading.
-    nscoord logicalHeight = nsHTMLReflowState::CalcLineHeight(rc, spanFrame);
+    nscoord logicalHeight =
+      nsHTMLReflowState::CalcLineHeight(mPresContext, rc, spanFrame);
     nscoord contentHeight = spanFramePFD->mBounds.height -
       spanFramePFD->mBorderPadding.top - spanFramePFD->mBorderPadding.bottom;
 
@@ -1990,7 +1969,8 @@ nsLineLayout::VerticalAlignFrames(PerSpanData* psd)
       case eStyleUnit_Percent:
         // Similar to a length value (eStyleUnit_Coord) except that the
         // percentage is a function of the elements line-height value.
-        elementLineHeight = nsHTMLReflowState::CalcLineHeight(rc, frame);
+        elementLineHeight =
+          nsHTMLReflowState::CalcLineHeight(mPresContext, rc, frame);
         percentOffset = nscoord(
           textStyle->mVerticalAlign.GetPercentValue() * elementLineHeight
           );
@@ -2021,8 +2001,8 @@ nsLineLayout::VerticalAlignFrames(PerSpanData* psd)
       // Only consider non empty text frames when line-height=normal
       PRBool canUpdate = !pfd->GetFlag(PFD_ISTEXTFRAME);
       if (!canUpdate && pfd->GetFlag(PFD_ISNONWHITESPACETEXTFRAME)) {
-        canUpdate =
-          frame->GetStyleText()->mLineHeight.GetUnit() == eStyleUnit_Normal;
+        nsStyleUnit lhUnit = frame->GetStyleText()->mLineHeight.GetUnit();
+        canUpdate = lhUnit == eStyleUnit_Normal || lhUnit == eStyleUnit_Null;
       }
       if (canUpdate) {
 #endif
@@ -2706,4 +2686,25 @@ nsLineLayout::RelativePositionFrames(PerSpanData* psd, nsRect& aCombinedArea)
     frame->FinishAndStoreOverflow(&combinedAreaResult, frame->GetSize());
   }
   aCombinedArea = combinedAreaResult;
+}
+
+PRBool
+nsLineLayout::TreatFrameAsBlock(nsIFrame* aFrame)
+{
+  const nsStyleDisplay* display = aFrame->GetStyleDisplay();
+  if (NS_STYLE_POSITION_ABSOLUTE == display->mPosition) {
+    return PR_FALSE;
+  }
+  if (NS_STYLE_FLOAT_NONE != display->mFloats) {
+    return PR_FALSE;
+  }
+  switch (display->mDisplay) {
+  case NS_STYLE_DISPLAY_BLOCK:
+  case NS_STYLE_DISPLAY_LIST_ITEM:
+  case NS_STYLE_DISPLAY_RUN_IN:
+  case NS_STYLE_DISPLAY_COMPACT:
+  case NS_STYLE_DISPLAY_TABLE:
+    return PR_TRUE;
+  }
+  return PR_FALSE;
 }

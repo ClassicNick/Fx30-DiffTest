@@ -133,7 +133,7 @@ nsHTMLContainerFrame::DisplayTextDecorations(nsDisplayListBuilder* aBuilder,
                                              nsDisplayList* aAboveTextDecorations,
                                              nsLineBox* aLine)
 {
-  if (eCompatibility_NavQuirks == PresContext()->CompatibilityMode())
+  if (eCompatibility_NavQuirks == GetPresContext()->CompatibilityMode())
     return NS_OK;
   if (!IsVisibleForPainting(aBuilder))
     return NS_OK;
@@ -143,7 +143,7 @@ nsHTMLContainerFrame::DisplayTextDecorations(nsDisplayListBuilder* aBuilder,
   // nsTextFrame::PaintTextDecorations.  (See bug 1777.)
   nscolor underColor, overColor, strikeColor;
   PRUint8 decorations = NS_STYLE_TEXT_DECORATION_NONE;
-  GetTextDecorations(PresContext(), aLine != nsnull, decorations, underColor, 
+  GetTextDecorations(GetPresContext(), aLine != nsnull, decorations, underColor, 
                      overColor, strikeColor);
 
   if (decorations & NS_STYLE_TEXT_DECORATION_UNDERLINE) {
@@ -255,7 +255,7 @@ nsHTMLContainerFrame::GetTextDecorations(nsPresContext* aPresContext,
 
       nsStyleContext* styleContext = frame->GetStyleContext();
       const nsStyleDisplay* styleDisplay = styleContext->GetStyleDisplay();
-      if (!styleDisplay->IsBlockOutside() &&
+      if (!styleDisplay->IsBlockLevel() &&
           styleDisplay->mDisplay != NS_STYLE_DISPLAY_TABLE_CELL) {
         // If an inline frame is discovered while walking up the tree,
         // we should stop according to CSS3 draft. CSS2 is rather vague
@@ -554,7 +554,7 @@ nsHTMLContainerFrame::CreateViewForFrame(nsIFrame* aFrame,
   if (!view)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  SyncFrameViewProperties(aFrame->PresContext(), aFrame, nsnull, view);
+  SyncFrameViewProperties(aFrame->GetPresContext(), aFrame, nsnull, view);
 
   // Insert the view into the view hierarchy. If the parent view is a
   // scrolling view we need to do this differently
@@ -567,6 +567,14 @@ nsHTMLContainerFrame::CreateViewForFrame(nsIFrame* aFrame,
     // in which case we want to call with aAbove == PR_FALSE to insert at the beginning
     // in document order
     viewManager->InsertChild(parentView, view, insertBefore, insertBefore != nsnull);
+
+    if (nsnull != aContentParentFrame) {
+      nsIView* zParentView = aContentParentFrame->GetClosestView();
+      if (zParentView != parentView) {
+        insertBefore = nsLayoutUtils::FindSiblingViewFor(zParentView, aFrame);
+        viewManager->InsertZPlaceholder(zParentView, view, insertBefore, insertBefore != nsnull);
+      }
+    }
   }
 
   // REVIEW: Don't create a widget for fixed-pos elements anymore.

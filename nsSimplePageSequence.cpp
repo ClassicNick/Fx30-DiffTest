@@ -120,7 +120,7 @@ nsSimplePageSequenceFrame::nsSimplePageSequenceFrame(nsStyleContext* aContext) :
 
   // XXX Unsafe to assume successful allocation
   mPageData = new nsSharedPageData();
-  mPageData->mHeadFootFont = new nsFont(*PresContext()->GetDefaultFont(kGenericFont_serif));
+  mPageData->mHeadFootFont = new nsFont(*GetPresContext()->GetDefaultFont(kGenericFont_serif));
   mPageData->mHeadFootFont->size = NSIntPointsToTwips(10);
 
   nsresult rv;
@@ -203,9 +203,7 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
 
   aStatus = NS_FRAME_COMPLETE;  // we're always complete
 
-  // Don't do incremental reflow until we've taught tables how to do
-  // it right in paginated mode.
-  if (!(GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
+  if (!(GetStateBits() & (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN))) {
     // Return our desired size
     aDesiredSize.height  = mSize.height;
     aDesiredSize.width   = mSize.width;
@@ -217,9 +215,6 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
 
   PRBool isPrintPreview =
     aPresContext->Type() == nsPresContext::eContext_PrintPreview;
-  if (isPrintPreview) {
-    aPresContext->SetScalingOfTwips(PR_TRUE);
-  }
 
   // See if we can get a Print Settings from the Context
   if (!mPageData->mPrintSettings &&
@@ -229,7 +224,6 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
 
   // now get out margins
   if (mPageData->mPrintSettings) {
-    nsMargin marginTwips;
     mPageData->mPrintSettings->GetMarginInTwips(mMargin);
     PRInt16 printType;
     mPageData->mPrintSettings->GetPrintRange(&printType);
@@ -365,6 +359,8 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
 #endif
 
   // Return our desired size
+  // Adjustr the reflow size by PrintPreviewScale so the scrollbars end up the
+  // correct size
   aDesiredSize.height  = y; // includes page heights and dead space
   aDesiredSize.width   = x + availSize.width + deadSpaceGap;
 
@@ -376,12 +372,6 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
   // for the other reflows that happen
   mSize.width  = aDesiredSize.width;
   mSize.height = aDesiredSize.height;
-
-  // Turn off the scaling of twips so any of the scrollbars
-  // in the document get scaled
-  if (isPrintPreview) {
-    aPresContext->SetScalingOfTwips(PR_FALSE);
-  }
 
   NS_FRAME_TRACE_REFLOW_OUT("nsSimplePageSequeceFrame::Reflow", aStatus);
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
@@ -480,7 +470,6 @@ nsSimplePageSequenceFrame::StartPrint(nsPresContext*   aPresContext,
 
   aPrintSettings->GetStartPageRange(&mFromPageNum);
   aPrintSettings->GetEndPageRange(&mToPageNum);
-  aPrintSettings->GetMarginInTwips(mMargin);
 
   mDoingPageRange = nsIPrintSettings::kRangeSpecifiedPageRange == mPrintRangeType ||
                     nsIPrintSettings::kRangeSelection == mPrintRangeType;
@@ -563,7 +552,7 @@ nsSimplePageSequenceFrame::PrintNextPage()
   mPageData->mPrintSettings->GetPrintOptions(nsIPrintSettings::kPrintOddPages, &printOddPages);
 
   // Begin printing of the document
-  nsIDeviceContext *dc = PresContext()->DeviceContext();
+  nsIDeviceContext *dc = GetPresContext()->DeviceContext();
 
   nsresult rv = NS_OK;
 
@@ -606,8 +595,8 @@ nsSimplePageSequenceFrame::PrintNextPage()
     // I will soon improve this to work with IFrames 
     PRBool  continuePrinting = PR_TRUE;
     PRInt32 width, height;
-    width = PresContext()->GetPageSize().width;
-    height = PresContext()->GetPageSize().height;
+    width = GetPresContext()->GetPageSize().width;
+    height = GetPresContext()->GetPageSize().height;
     height -= mMargin.top + mMargin.bottom;
     width  -= mMargin.left + mMargin.right;
     nscoord selectionY = height;
@@ -623,7 +612,7 @@ nsSimplePageSequenceFrame::PrintNextPage()
 
     PRInt32 printedPageNum = 1;
     while (continuePrinting) {
-      if (PresContext()->IsRootPaginatedDocument()) {
+      if (GetPresContext()->IsRootPaginatedDocument()) {
         PR_PL(("\n"));
         PR_PL(("***************** BeginPage *****************\n"));
         rv = dc->BeginPage();
@@ -633,7 +622,7 @@ nsSimplePageSequenceFrame::PrintNextPage()
       PR_PL(("SeqFr::Paint -> %p PageNo: %d", pf, mPageNum));
 
       nsCOMPtr<nsIRenderingContext> renderingContext;
-      PresContext()->PresShell()->
+      GetPresContext()->PresShell()->
               CreateRenderingContext(mCurrentPageFrame,
                                      getter_AddRefs(renderingContext));
       nsRect drawingRect(nsPoint(0, 0),
@@ -663,9 +652,9 @@ NS_IMETHODIMP
 nsSimplePageSequenceFrame::DoPageEnd()
 {
   nsresult rv = NS_OK;
-  if (PresContext()->IsRootPaginatedDocument() && mPrintThisPage) {
+  if (GetPresContext()->IsRootPaginatedDocument() && mPrintThisPage) {
     PR_PL(("***************** End Page (DoPageEnd) *****************\n"));
-    rv = PresContext()->DeviceContext()->EndPage();
+    rv = GetPresContext()->DeviceContext()->EndPage();
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -678,39 +667,7 @@ nsSimplePageSequenceFrame::DoPageEnd()
   return rv;
 }
 
-static void PaintPageSequence(nsIFrame* aFrame, nsIRenderingContext* aCtx,
-                             const nsRect& aDirtyRect, nsPoint aPt)
-{
-  NS_STATIC_CAST(nsSimplePageSequenceFrame*, aFrame)->PaintPageSequence(*aCtx, aDirtyRect, aPt);
-}
-
 //------------------------------------------------------------------------------
-void
-nsSimplePageSequenceFrame::PaintPageSequence(nsIRenderingContext& aRenderingContext,
-                                             const nsRect&        aDirtyRect,
-                                             nsPoint              aPt) {
-  nsRect rect = aDirtyRect;
-  aRenderingContext.PushState();
-  nsPoint framePos = aPt;
-  aRenderingContext.Translate(framePos.x, framePos.y);
-  rect -= framePos;
-
-  // Now the rect and the rendering coordinates are are relative to this frame.
-  // Loop over the pages and paint them.
-  nsIFrame* child = GetFirstChild(nsnull);
-  while (child) {
-    nsPoint pt = child->GetPosition();
-    // The rendering context has to be translated before each call to PaintFrame
-    aRenderingContext.PushState();
-    aRenderingContext.Translate(pt.x, pt.y);
-    nsLayoutUtils::PaintFrame(&aRenderingContext, child,
-                              nsRegion(rect - pt), NS_RGBA(0,0,0,0));
-    aRenderingContext.PopState();
-    child = child->GetNextSibling();
-  }
-
-  aRenderingContext.PopState();
-}
 
 NS_IMETHODIMP
 nsSimplePageSequenceFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
@@ -720,11 +677,10 @@ nsSimplePageSequenceFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = aLists.Content()->AppendNewToTop(new (aBuilder)
-        nsDisplayGeneric(this, ::PaintPageSequence, "PageSequence"));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
+  // Treat each page as a psuedo-stack so everything goes in the Content() list.
+  return
+    BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, aLists,
+                                        DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT);
 }
 
 nsIAtom*

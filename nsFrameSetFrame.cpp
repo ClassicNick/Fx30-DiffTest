@@ -321,7 +321,7 @@ nsHTMLFramesetFrame::Init(nsIContent*      aContent,
     }
   }
 
-  nsPresContext* aPresContext = PresContext();
+  nsPresContext* aPresContext = GetPresContext();
 
   // create the view. a view is needed since it needs to be a mouse grabber
   nsIViewManager* viewMan = aPresContext->GetViewManager();
@@ -633,7 +633,7 @@ void nsHTMLFramesetFrame::GenerateRowCol(nsPresContext*       aPresContext,
                                          nscoord*              aValues,
                                          nsString&             aNewAttr)
 {
-	float t2p;
+  float t2p;
   t2p = aPresContext->TwipsToPixels();
   PRInt32 i;
  
@@ -1013,24 +1013,13 @@ nsHTMLFramesetFrame::Reflow(nsPresContext*          aPresContext,
   height -= (mNumRows - 1) * borderWidth;
   if (height < 0) height = 0;
 
-  nsCOMPtr<nsIFrameSetElement> ourContent(do_QueryInterface(mContent));
-  NS_ASSERTION(ourContent, "Someone gave us a broken frameset element!");
-  const nsFramesetSpec* rowSpecs = nsnull;
-  const nsFramesetSpec* colSpecs = nsnull;
-  PRInt32 rows = 0;
-  PRInt32 cols = 0;
-  ourContent->GetRowSpec(&rows, &rowSpecs);
-  ourContent->GetColSpec(&cols, &colSpecs);
-  // If the number of cols or rows has changed, the frame for the frameset
-  // will be re-created.
-  if (mNumRows != rows || mNumCols != cols) {
-    aStatus = NS_FRAME_COMPLETE;
-    mDrag.UnSet();
-    NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
-    return NS_OK;
-  }
-
   if (!mDrag.mActive) {
+    nsCOMPtr<nsIFrameSetElement> ourContent(do_QueryInterface(mContent));
+    NS_ASSERTION(ourContent, "Someone gave us a broken frameset element!");
+    const nsFramesetSpec* rowSpecs = nsnull;
+    const nsFramesetSpec* colSpecs = nsnull;
+    ourContent->GetRowSpec(&mNumRows, &rowSpecs);
+    ourContent->GetColSpec(&mNumCols, &colSpecs);
     CalculateRowCol(aPresContext, width, mNumCols, colSpecs, mColSizes);
     CalculateRowCol(aPresContext, height, mNumRows, rowSpecs, mRowSizes);
   }
@@ -1281,9 +1270,6 @@ nsHTMLFramesetFrame::Reflow(nsPresContext*          aPresContext,
   aStatus = NS_FRAME_COMPLETE;
   mDrag.UnSet();
 
-  aDesiredSize.mOverflowArea = nsRect(0, 0,
-                                      aDesiredSize.width, aDesiredSize.height);
-
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return NS_OK;
 }
@@ -1365,7 +1351,6 @@ nsHTMLFramesetFrame::CanChildResize(PRBool  aVertical,
 {
   nsIFrame* child = mFrames.FrameAt(aChildX);
   if (aFrameset) {
-    NS_ASSERTION(ChildIsFrameset(child), "Child frame is not a frameset!");
     return ((nsHTMLFramesetFrame*)child)->CanResize(aVertical, aLeft);
   } else {
     return !GetNoResize(child);
@@ -1386,7 +1371,7 @@ nsHTMLFramesetFrame::RecalculateBorderResize()
   if (NS_UNLIKELY(!childTypes)) {
     return;
   }
-  PRUint32 childIndex, childTypeIndex = 0;
+  PRUint32 childIndex, frameOrFramesetChildIndex = 0;
 
   // number of any type of children
   PRUint32 numChildren = mContent->GetChildCount();
@@ -1397,18 +1382,15 @@ nsHTMLFramesetFrame::RecalculateBorderResize()
       nsINodeInfo *ni = child->NodeInfo();
 
       if (ni->Equals(nsGkAtoms::frameset)) {
-        childTypes[childTypeIndex++] = FRAMESET;
+        childTypes[frameOrFramesetChildIndex++] = FRAMESET;
       } else if (ni->Equals(nsGkAtoms::frame)) {
-        childTypes[childTypeIndex++] = FRAME;
+        childTypes[frameOrFramesetChildIndex++] = FRAME;
       }
       // Don't overflow childTypes array
-      if (((PRInt32)childTypeIndex) >= numCells) {
+      if (((PRInt32)frameOrFramesetChildIndex) >= numCells) {
         break;
       }
     }
-  }
-  for (; childTypeIndex < numCells; ++childTypeIndex) {
-    childTypes[childTypeIndex] = BLANK;
   }
 
   // set the visibility and mouse sensitivity of borders
@@ -1481,11 +1463,6 @@ nsHTMLFramesetFrame::StartMouseDrag(nsPresContext*            aPresContext,
                                     nsHTMLFramesetBorderFrame* aBorder, 
                                     nsGUIEvent*                aEvent)
 {
-	if (mMinDrag == 0) {
-    float p2t;
-    p2t = aPresContext->PixelsToTwips();
-    mMinDrag = NSIntPixelsToTwips(2, p2t);  // set min drag and min frame size to 2 pixels
-  }
 #if 0
   PRInt32 index;
   IndexOf(aBorder, index);
@@ -1498,6 +1475,9 @@ nsHTMLFramesetFrame::StartMouseDrag(nsPresContext*            aPresContext,
       PRBool ignore;
       viewMan->GrabMouseEvents(view, ignore);
       mDragger = aBorder;
+
+      //XXX This should go away!  Border should have own view instead
+      viewMan->SetViewCheckChildEvents(view, PR_FALSE);
 
       mFirstDragPoint = aEvent->refPoint;
 
@@ -1601,6 +1581,8 @@ nsHTMLFramesetFrame::EndMouseDrag(nsPresContext* aPresContext)
       mDragger = nsnull;
       PRBool ignore;
       viewMan->GrabMouseEvents(nsnull, ignore);
+      //XXX This should go away!  Border should have own view instead
+      viewMan->SetViewCheckChildEvents(view, PR_TRUE);
     }
   }
   gDragInProgress = PR_FALSE;
@@ -1663,8 +1645,6 @@ nsHTMLFramesetBorderFrame::Reflow(nsPresContext*          aPresContext,
   // computed values are.
   SizeToAvailSize(aReflowState, aDesiredSize);
 
-  aDesiredSize.mOverflowArea = nsRect(0, 0,
-                                      aDesiredSize.width, aDesiredSize.height);
   aStatus = NS_FRAME_COMPLETE;
   return NS_OK;
 }
@@ -1730,7 +1710,7 @@ void nsHTMLFramesetBorderFrame::PaintBorder(nsIRenderingContext& aRenderingConte
     }
   }
 
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   float t2p;
   t2p = presContext->TwipsToPixels();
   nscoord widthInPixels = NSTwipsToIntPixels(mWidth, t2p);
@@ -1743,8 +1723,8 @@ void nsHTMLFramesetBorderFrame::PaintBorder(nsIRenderingContext& aRenderingConte
 
   nscoord x0 = 0;
   nscoord y0 = 0;
-  nscoord x1 = (mVertical) ? 0 : mRect.width;
-  nscoord y1 = (mVertical) ? mRect.height : 0;
+  nscoord x1 = (mVertical) ? x0 : mRect.width;
+  nscoord y1 = (mVertical) ? mRect.height : x0;
 
   nscolor color = WHITE;
   if (mVisibility || mVisibilityOverride) {
@@ -1866,8 +1846,6 @@ nsHTMLFramesetBlankFrame::Reflow(nsPresContext*          aPresContext,
   // computed values are.
   SizeToAvailSize(aReflowState, aDesiredSize);
 
-  aDesiredSize.mOverflowArea = nsRect(0, 0,
-                                      aDesiredSize.width, aDesiredSize.height);
   aStatus = NS_FRAME_COMPLETE;
   return NS_OK;
 }

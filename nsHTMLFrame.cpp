@@ -188,7 +188,7 @@ CanvasFrame::Init(nsIContent*      aContent,
 {
   nsresult rv = nsHTMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
-  mViewManager = PresContext()->GetViewManager();
+  mViewManager = GetPresContext()->GetViewManager();
 
   nsIScrollableView* scrollingView = nsnull;
   mViewManager->GetRootScrollableView(&scrollingView);
@@ -250,7 +250,7 @@ CanvasFrame::SetHasFocus(PRBool aHasFocus)
 {
   if (mDoPaintFocus != aHasFocus) {
     mDoPaintFocus = aHasFocus;
-    nsIViewManager* vm = PresContext()->PresShell()->GetViewManager();
+    nsIViewManager* vm = GetPresContext()->PresShell()->GetViewManager();
     if (vm) {
       vm->UpdateAllViews(NS_VMREFRESH_NO_SYNC);
     }
@@ -281,9 +281,8 @@ CanvasFrame::AppendFrames(nsIAtom*        aListName,
 #endif
     mFrames.AppendFrame(nsnull, aFrameList);
 
-    rv = PresContext()->PresShell()->
-           FrameNeedsReflow(this, nsIPresShell::eTreeChange,
-                            NS_FRAME_HAS_DIRTY_CHILDREN);
+    rv = GetPresContext()->PresShell()->
+           FrameNeedsReflow(this, nsIPresShell::eTreeChange);
   }
 
   return rv;
@@ -329,9 +328,9 @@ CanvasFrame::RemoveFrame(nsIAtom*        aListName,
     // Remove the frame and destroy it
     mFrames.DestroyFrame(aOldFrame);
 
-    rv = PresContext()->PresShell()->
-           FrameNeedsReflow(this, nsIPresShell::eTreeChange,
-                            NS_FRAME_HAS_DIRTY_CHILDREN);
+    AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+    rv = GetPresContext()->PresShell()->
+           FrameNeedsReflow(this, nsIPresShell::eTreeChange);
   } else {
     rv = NS_ERROR_FAILURE;
   }
@@ -376,7 +375,7 @@ public:
     CanvasFrame* frame = NS_STATIC_CAST(CanvasFrame*, mFrame);
     nsPoint offset = aBuilder->ToReferenceFrame(mFrame);
     nsRect bgClipRect = frame->CanvasArea() + offset;
-    nsCSSRendering::PaintBackground(mFrame->PresContext(), *aCtx, mFrame,
+    nsCSSRendering::PaintBackground(mFrame->GetPresContext(), *aCtx, mFrame,
                                     aDirtyRect,
                                     nsRect(offset, mFrame->GetSize()),
                                     *mFrame->GetStyleBorder(),
@@ -492,7 +491,7 @@ CanvasFrame::PaintFocus(nsIRenderingContext& aRenderingContext, nsPoint aPt)
     focusRect.y += y;
   }
 
-  nsStyleOutline outlineStyle(PresContext());
+  nsStyleOutline outlineStyle(GetPresContext());
   outlineStyle.SetOutlineStyle(NS_STYLE_BORDER_STYLE_DOTTED);
   outlineStyle.SetOutlineInitialColor();
 
@@ -507,9 +506,9 @@ CanvasFrame::PaintFocus(nsIRenderingContext& aRenderingContext, nsPoint aPt)
     return;
   }
 
-  float p2t = PresContext()->PixelsToTwips();
-   // XXX the CSS border for links is specified as 2px, but it
-   // is only drawn as 1px.  Match this here.
+  float p2t = GetPresContext()->PixelsToTwips();
+  // XXX the CSS border for links is specified as 2px, but it
+  // is only drawn as 1px.  Match this here.
   nscoord onePixel = NSIntPixelsToTwips(1, p2t);
 
   nsRect borderInside(focusRect.x + onePixel,

@@ -138,8 +138,9 @@ nsContainerFrame::AppendFrames(nsIAtom*  aListName,
     if (nsnull == aListName)
 #endif
     {
-      PresContext()->PresShell()->
-        FrameNeedsReflow(this, nsIPresShell::eTreeChange, NS_FRAME_IS_DIRTY);
+      AddStateBits(NS_FRAME_IS_DIRTY);
+      GetPresContext()->PresShell()->
+        FrameNeedsReflow(this, nsIPresShell::eTreeChange);
     }
   }
   return NS_OK;
@@ -170,8 +171,10 @@ nsContainerFrame::InsertFrames(nsIAtom*  aListName,
     if (nsnull == aListName)
 #endif
     {
-      PresContext()->PresShell()->
-        FrameNeedsReflow(this, nsIPresShell::eTreeChange, NS_FRAME_IS_DIRTY);
+      // Ask the parent frame to reflow me.
+      AddStateBits(NS_FRAME_IS_DIRTY);
+      GetPresContext()->PresShell()->
+        FrameNeedsReflow(this, nsIPresShell::eTreeChange);
     }
   }
   return NS_OK;
@@ -226,8 +229,10 @@ nsContainerFrame::RemoveFrame(nsIAtom*  aListName,
     }
 
     if (generateReflowCommand) {
-      PresContext()->PresShell()->
-        FrameNeedsReflow(this, nsIPresShell::eTreeChange, NS_FRAME_IS_DIRTY);
+      // Ask the parent frame to reflow me.
+      AddStateBits(NS_FRAME_IS_DIRTY);
+      GetPresContext()->PresShell()->
+        FrameNeedsReflow(this, nsIPresShell::eTreeChange);
     }
   }
 
@@ -246,7 +251,7 @@ nsContainerFrame::CleanupGeneratedContentIn(nsIContent* aRealContent,
       if (content && content != aRealContent) {
         // Tell the ESM that this content is going away now, so it'll update
         // its hover content, etc.
-        aRoot->PresContext()->EventStateManager()->ContentRemoved(content);
+        aRoot->GetPresContext()->EventStateManager()->ContentRemoved(content);
         content->UnbindFromTree();
       }
       CleanupGeneratedContentIn(aRealContent, child);
@@ -268,7 +273,7 @@ nsContainerFrame::Destroy()
   mFrames.DestroyFrames();
   
   // Destroy overflow frames now
-  nsFrameList overflowFrames(GetOverflowFrames(PresContext(), PR_TRUE));
+  nsFrameList overflowFrames(GetOverflowFrames(GetPresContext(), PR_TRUE));
   overflowFrames.DestroyFrames();
 
   // Destroy the frame and remove the flow pointers
@@ -286,7 +291,7 @@ nsContainerFrame::GetFirstChild(nsIAtom* aListName) const
   if (nsnull == aListName) {
     return mFrames.FirstChild();
   } else if (nsGkAtoms::overflowList == aListName) {
-    return GetOverflowFrames(PresContext(), PR_FALSE);
+    return GetOverflowFrames(GetPresContext(), PR_FALSE);
   } else {
     return nsnull;
   }
@@ -394,6 +399,39 @@ nsContainerFrame::PositionFrameView(nsIFrame* aKidFrame)
   vm->MoveViewTo(view, pt.x, pt.y);
 }
 
+// This code is duplicated in nsDisplayList.cpp. We'll remove the duplication
+// when we remove all this view sync code.
+static PRBool
+NonZeroStyleCoord(const nsStyleCoord& aCoord) {
+  switch (aCoord.GetUnit()) {
+  case eStyleUnit_Percent:
+    return aCoord.GetPercentValue() > 0;
+  case eStyleUnit_Coord:
+    return aCoord.GetCoordValue() > 0;
+  case eStyleUnit_Null:
+    return PR_FALSE;
+  default:
+    return PR_TRUE;
+  }
+}
+
+static PRBool
+HasNonZeroBorderRadius(nsStyleContext* aStyleContext) {
+  const nsStyleBorder* border = aStyleContext->GetStyleBorder();
+
+  nsStyleCoord coord;
+  border->mBorderRadius.GetTop(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;
+  border->mBorderRadius.GetRight(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;
+  border->mBorderRadius.GetBottom(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;
+  border->mBorderRadius.GetLeft(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;
+
+  return PR_FALSE;
+}
+
 static void
 SyncFrameViewGeometryDependentProperties(nsPresContext*  aPresContext,
                                          nsIFrame*        aFrame,
@@ -408,10 +446,26 @@ SyncFrameViewGeometryDependentProperties(nsPresContext*  aPresContext,
   PRBool hasBG =
     nsCSSRendering::FindBackground(aPresContext, aFrame, &bg, &isCanvas);
 
+  const nsStyleDisplay* display = aStyleContext->GetStyleDisplay();
+  // If the frame has a solid background color, 'background-clip:border',
+  // and it's a kind of frame that paints its background, and rounded borders aren't
+  // clipping the background, then it's opaque.
+  // If the frame has a native theme appearance then its background
+  // color is actually not relevant.
+  PRBool  viewHasTransparentContent =
+    !(hasBG && !(bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) &&
+      !display->mAppearance && bg->mBackgroundClip == NS_STYLE_BG_CLIP_BORDER &&
+      !HasNonZeroBorderRadius(aStyleContext));
+
   if (isCanvas) {
     nsIView* rootView;
     vm->GetRootView(rootView);
     nsIView* rootParent = rootView->GetParent();
+    if (!rootParent) {
+      // We're the root of a view manager hierarchy. We will have to
+      // paint something. NOTE: this can be overridden below.
+      viewHasTransparentContent = PR_FALSE;
+    }
 
     nsIDocument *doc = aPresContext->PresShell()->GetDocument();
     if (doc) {
@@ -424,8 +478,32 @@ SyncFrameViewGeometryDependentProperties(nsPresContext*  aPresContext,
         // don't proceed unless this is the root view
         // (sometimes the non-root-view is a canvas)
         if (aView->HasWidget() && aView == rootView) {
-          aView->GetWidget()->SetWindowTranslucency(nsLayoutUtils::FrameHasTransparency(aFrame));
+          viewHasTransparentContent = hasBG && (bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT);
+          aView->GetWidget()->SetWindowTranslucency(viewHasTransparentContent);
         }
+      }
+    }
+  }
+  // XXX we should also set widget transparency for XUL popups
+
+  nsFrameState kidState = aFrame->GetStateBits();
+  PRBool isBlockLevel =
+    display->IsBlockLevel() || (kidState & NS_FRAME_OUT_OF_FLOW);
+  
+  if (!viewHasTransparentContent) {
+    const nsStyleVisibility* vis = aStyleContext->GetStyleVisibility();
+    if (// If we're showing the view but the frame is hidden, then the
+        // view is transparent
+        (nsViewVisibility_kShow == aView->GetVisibility() &&
+         NS_STYLE_VISIBILITY_HIDDEN == vis->mVisible)) {
+      viewHasTransparentContent = PR_TRUE;
+    } else {
+      PRBool isScrolledContent = aView->GetParent() &&
+        aView->GetParent()->ToScrollableView();
+      // If we have overflowing kids and we're not clipped by a parent
+      // scrolling view, then the view must be transparent.
+      if (!isScrolledContent && (kidState & NS_FRAME_OUTSIDE_CHILDREN)) {
+        viewHasTransparentContent = PR_TRUE;
       }
     }
   }
@@ -442,8 +520,6 @@ nsContainerFrame::SyncFrameViewAfterReflow(nsPresContext* aPresContext,
     return;
   }
 
-  NS_ASSERTION(aCombinedArea, "Combined area must be passed in now");
-
   // Make sure the view is sized and positioned correctly
   if (0 == (aFlags & NS_FRAME_NO_MOVE_VIEW)) {
     PositionFrameView(aFrame);
@@ -452,7 +528,19 @@ nsContainerFrame::SyncFrameViewAfterReflow(nsPresContext* aPresContext,
   if (0 == (aFlags & NS_FRAME_NO_SIZE_VIEW)) {
     nsIViewManager* vm = aView->GetViewManager();
 
-    vm->ResizeView(aView, *aCombinedArea, PR_TRUE);
+    // If the frame has child frames that stick outside the content
+    // area, then size the view large enough to include those child
+    // frames
+    NS_ASSERTION(!(aFrame->GetStateBits() & NS_FRAME_OUTSIDE_CHILDREN) ||
+                 aCombinedArea,
+                 "resizing view for frame with overflow to the wrong size");
+    if ((aFrame->GetStateBits() & NS_FRAME_OUTSIDE_CHILDREN) && aCombinedArea) {
+      vm->ResizeView(aView, *aCombinedArea, PR_TRUE);
+    } else {
+      nsSize frameSize = aFrame->GetSize();
+      nsRect newSize(0, 0, frameSize.width, frameSize.height);
+      vm->ResizeView(aView, newSize, PR_TRUE);
+    }
 
     // Even if the size hasn't changed, we need to sync up the
     // geometry dependent properties, because (kidState &

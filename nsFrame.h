@@ -113,6 +113,10 @@
 #define NS_FRAME_TRACE_REFLOW_OUT(_method, _status)
 #endif
 
+// handy utilities
+// XXXldb Move to nsLayoutUtils!
+void SetFontFromStyle(nsIRenderingContext* aRC, nsStyleContext* aSC);
+
 //----------------------------------------------------------------------
 
 struct nsBoxLayoutMetrics;
@@ -152,7 +156,7 @@ public:
 
 private:
   // The normal operator new is disallowed on nsFrames.
-  void* operator new(size_t sz) CPP_THROW_NEW { return nsnull; }
+  void* operator new(size_t sz) CPP_THROW_NEW { return nsnull; };
 
 public:
 
@@ -277,7 +281,6 @@ public:
                                   InlinePrefWidthData *aData);
   virtual IntrinsicWidthOffsetData
     IntrinsicWidthOffsets(nsIRenderingContext* aRenderingContext);
-  virtual nsSize GetIntrinsicRatio();
 
   virtual nsSize ComputeSize(nsIRenderingContext *aRenderingContext,
                              nsSize aCBSize, nscoord aAvailableWidth,
@@ -514,18 +517,6 @@ public:
    */
   nsresult DisplayOutline(nsDisplayListBuilder*   aBuilder,
                           const nsDisplayListSet& aLists);
-
-  /**
-   * Adjust the given parent frame to the right style context parent frame for
-   * the child, given the pseudo-type of the prospective child.  This handles
-   * things like walking out of table pseudos and so forth.
-   *
-   * @param aProspectiveParent what GetParent() on the child returns.
-   *                           Must not be null.
-   * @param aChildPseudo the child's pseudo type, if any.
-   */
-  static nsIFrame*
-  CorrectStyleParentFrame(nsIFrame* aProspectiveParent, nsIAtom* aChildPseudo);
 
 protected:
   // Protected constructor and destructor

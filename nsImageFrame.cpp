@@ -280,7 +280,7 @@ nsImageFrame::Init(nsIContent*      aContent,
   NS_ENSURE_TRUE(imageLoader, NS_ERROR_UNEXPECTED);
   imageLoader->AddObserver(mListener);
 
-  nsPresContext *aPresContext = PresContext();
+  nsPresContext *aPresContext = GetPresContext();
   
   if (!gIconLoad)
     LoadIcons(aPresContext);
@@ -316,8 +316,8 @@ nsImageFrame::UpdateIntrinsicSize(imgIContainer* aImage)
   PRBool intrinsicSizeChanged = PR_FALSE;
   
   if (aImage) {
-	   float p2t;
-    p2t = PresContext()->PixelsToTwips();
+	float p2t;
+    p2t = GetPresContext()->PixelsToTwips();
     nsSize imageSizeInPx;
     aImage->GetWidth(&imageSizeInPx.width);
     aImage->GetHeight(&imageSizeInPx.height);
@@ -404,13 +404,14 @@ nsImageFrame::IsPendingLoad(imgIContainer* aContainer) const
 nsRect
 nsImageFrame::SourceRectToDest(const nsRect& aRect)
 {
+  float p2t = GetPresContext()->PixelsToTwips();
+
   // When scaling the image, row N of the source image may (depending on
   // the scaling function) be used to draw any row in the destination image
   // between floor(F * (N-1)) and ceil(F * (N+1)), where F is the
   // floating-point scaling factor.  The same holds true for columns.
   // So, we start by computing that bound without the floor and ceiling.
 
-	float p2t = PresContext()->PixelsToTwips();
   nsRect r(NSIntPixelsToTwips(aRect.x - 1, p2t),
            NSIntPixelsToTwips(aRect.y - 1, p2t),
            NSIntPixelsToTwips(aRect.width + 2, p2t),
@@ -519,7 +520,7 @@ nsImageFrame::OnStartContainer(imgIRequest *aRequest, imgIContainer *aImage)
    *   one frame = 1
    *   one loop = 2
    */
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   aImage->SetAnimationMode(presContext->ImageAnimationMode());
   // Ensure the animation (if any) is started.
   aImage->StartAnimation();
@@ -535,10 +536,12 @@ nsImageFrame::OnStartContainer(imgIRequest *aRequest, imgIContainer *aImage)
   // already gotten the initial reflow
   if (!(mState & IMAGE_SIZECONSTRAINED) && (mState & IMAGE_GOTINITIALREFLOW)) { 
     nsIPresShell *presShell = presContext->GetPresShell();
+    NS_ASSERTION(mParent, "No parent to pass the reflow request up to.");
     NS_ASSERTION(presShell, "No PresShell.");
-    if (presShell) { 
-      presShell->FrameNeedsReflow(this, nsIPresShell::eStyleChange,
-                                  NS_FRAME_IS_DIRTY);
+    if (mParent && presShell) { 
+      AddStateBits(NS_FRAME_IS_DIRTY);
+      presShell->FrameNeedsReflow(NS_STATIC_CAST(nsIFrame*, this),
+                                  nsIPresShell::eStyleChange);
     }
   }
 
@@ -561,14 +564,10 @@ nsImageFrame::OnDataAvailable(imgIRequest *aRequest,
     return NS_OK;
   }
   
-  // XXX We really need to round this out, now that we're doing better
-  // image scaling!
-  nsRect r = SourceRectToDest(*aRect);
-
   // handle iconLoads first...
   if (HandleIconLoads(aRequest, PR_FALSE)) {
     // Image changed, invalidate
-    Invalidate(r, PR_FALSE);
+    Invalidate(*aRect, PR_FALSE);
     return NS_OK;
   }
 
@@ -590,6 +589,9 @@ nsImageFrame::OnDataAvailable(imgIRequest *aRequest,
     }
   }
 
+  // XXX We really need to round this out, now that we're doing better
+  // image scaling!
+  nsRect r = SourceRectToDest(*aRect);
 #ifdef DEBUG_decode
   printf("Source rect (%d,%d,%d,%d) -> invalidate dest rect (%d,%d,%d,%d)\n",
          aRect->x, aRect->y, aRect->width, aRect->height,
@@ -606,7 +608,7 @@ nsImageFrame::OnStopDecode(imgIRequest *aRequest,
                            nsresult aStatus,
                            const PRUnichar *aStatusArg)
 {
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   nsIPresShell *presShell = presContext->GetPresShell();
   NS_ASSERTION(presShell, "No PresShell.");
 
@@ -641,9 +643,11 @@ nsImageFrame::OnStopDecode(imgIRequest *aRequest,
 
     if (mState & IMAGE_GOTINITIALREFLOW) { // do nothing if we haven't gotten the initial reflow yet
       if (!(mState & IMAGE_SIZECONSTRAINED) && intrinsicSizeChanged) {
-        if (presShell) { 
-          presShell->FrameNeedsReflow(this, nsIPresShell::eStyleChange,
-                                      NS_FRAME_IS_DIRTY);
+        NS_ASSERTION(mParent, "No parent to pass the reflow request up to.");
+        if (mParent && presShell) { 
+          AddStateBits(NS_FRAME_IS_DIRTY);
+          presShell->FrameNeedsReflow(NS_STATIC_CAST(nsIFrame*, this),
+                                      nsIPresShell::eStyleChange);
         }
       } else {
         nsSize s = GetSize();
@@ -721,21 +725,13 @@ nsImageFrame::ComputeSize(nsIRenderingContext *aRenderingContext,
                           nsSize aMargin, nsSize aBorder, nsSize aPadding,
                           PRBool aShrinkWrap)
 {
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   EnsureIntrinsicSize(presContext);
-
-  // convert from normal twips to scaled twips (printing...)
-  float t2st = presContext->TwipsToPixels() *
-    presContext->ScaledPixelsToTwips(); // twips to scaled twips
-  nscoord intrinsicWidth =
-      NSToCoordRound(float(mIntrinsicSize.width) * t2st);
-  nscoord intrinsicHeight =
-      NSToCoordRound(float(mIntrinsicSize.height) * t2st);
 
   return nsLayoutUtils::ComputeSizeWithIntrinsicDimensions(
                             aRenderingContext, this,
-                            nsSize(intrinsicWidth, intrinsicHeight),
-                            aCBSize, aMargin, aBorder, aPadding);
+                            mIntrinsicSize,
+                            aCBSize, aBorder, aPadding);
 }
 
 nsRect 
@@ -763,12 +759,9 @@ nsImageFrame::GetMinWidth(nsIRenderingContext *aRenderingContext)
   // min-height, and max-height properties.
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   EnsureIntrinsicSize(presContext);
-  // convert from normal twips to scaled twips (printing...)
-  float t2st = presContext->TwipsToPixels() *
-               presContext->ScaledPixelsToTwips();
-  result = NSToCoordRound(float(mIntrinsicSize.width) * t2st);
+  result = mIntrinsicSize.width;
   return result;
 }
 
@@ -779,20 +772,11 @@ nsImageFrame::GetPrefWidth(nsIRenderingContext *aRenderingContext)
   // min-height, and max-height properties.
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   EnsureIntrinsicSize(presContext);
   // convert from normal twips to scaled twips (printing...)
-  float t2st = presContext->TwipsToPixels() *
-               presContext->ScaledPixelsToTwips();
-  result = NSToCoordRound(float(mIntrinsicSize.width) * t2st);
+  result = mIntrinsicSize.width;
   return result;
-}
-
-/* virtual */ nsSize
-nsImageFrame::GetIntrinsicRatio()
-{
-  EnsureIntrinsicSize(PresContext());
-  return mIntrinsicSize;
 }
 
 NS_IMETHODIMP
@@ -963,7 +947,7 @@ nsImageFrame::DisplayAltText(nsPresContext*      aPresContext,
 {
   // Set font and color
   aRenderingContext.SetColor(GetStyleColor()->mColor);
-  nsLayoutUtils::SetFontFromStyle(&aRenderingContext, mStyleContext);
+  SetFontFromStyle(&aRenderingContext, mStyleContext);
 
   // Format the text to display within the formatting rect
   nsIFontMetrics* fm;
@@ -1046,7 +1030,7 @@ nsImageFrame::DisplayAltFeedback(nsIRenderingContext& aRenderingContext,
 
   // Display a recessed one pixel border
   nscoord borderEdgeWidth;
-  float   p2t = PresContext()->ScaledPixelsToTwips();
+  float   p2t = GetPresContext()->ScaledPixelsToTwips();
   borderEdgeWidth = NSIntPixelsToTwips(ALT_BORDER_WIDTH, p2t);
 
   // if inner area is empty, then make it big enough for at least the icon
@@ -1062,8 +1046,8 @@ nsImageFrame::DisplayAltFeedback(nsIRenderingContext& aRenderingContext,
   }
 
   // Paint the border
-  nsRecessedBorder recessedBorder(borderEdgeWidth, PresContext());
-  nsCSSRendering::PaintBorder(PresContext(), aRenderingContext, this, inner,
+  nsRecessedBorder recessedBorder(borderEdgeWidth, GetPresContext());
+  nsCSSRendering::PaintBorder(GetPresContext(), aRenderingContext, this, inner,
                               inner, recessedBorder, mStyleContext, 0);
 
   // Adjust the inner rect to account for the one pixel recessed border,
@@ -1132,7 +1116,7 @@ nsImageFrame::DisplayAltFeedback(nsIRenderingContext& aRenderingContext,
       nsXPIDLString altText;
       nsCSSFrameConstructor::GetAlternateTextFor(content, content->Tag(),
                                                  altText);
-      DisplayAltText(PresContext(), aRenderingContext, altText, inner);
+      DisplayAltText(GetPresContext(), aRenderingContext, altText, inner);
     }
   }
 
@@ -1156,7 +1140,7 @@ static void PaintDebugImageMap(nsIFrame* aFrame, nsIRenderingContext* aCtx,
      const nsRect& aDirtyRect, nsPoint aPt) {
   nsImageFrame* f = NS_STATIC_CAST(nsImageFrame*, aFrame);
   nsRect inner = f->GetInnerArea() + aPt;
-  nsPresContext* pc = f->PresContext();
+  nsPresContext* pc = f->GetPresContext();
 
   aCtx->SetColor(NS_RGB(0, 0, 0));
   aCtx->PushState();
@@ -1211,7 +1195,7 @@ nsImageFrame::PaintImage(nsIRenderingContext& aRenderingContext, nsPoint aPt,
 
   aRenderingContext.DrawImage(aImage, dest, clip);
 
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   nsImageMap* map = GetImageMap(presContext);
   if (nsnull != map) {
     aRenderingContext.PushState();
@@ -1272,7 +1256,7 @@ nsImageFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       NS_ENSURE_SUCCESS(rv, rv);
         
 #ifdef DEBUG
-      if (GetShowFrameBorders() && GetImageMap(PresContext())) {
+      if (GetShowFrameBorders() && GetImageMap(GetPresContext())) {
         rv = aLists.Outlines()->AppendNewToTop(new (aBuilder)
             nsDisplayGeneric(this, PaintDebugImageMap, "DebugImageMap"));
         NS_ENSURE_SUCCESS(rv, rv);
@@ -1284,7 +1268,7 @@ nsImageFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // XXX what on EARTH is this code for?
   PRInt16 displaySelection = 0;
   nsresult result;
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   result = presContext->PresShell()->GetSelectionFlags(&displaySelection);
   if (NS_FAILED(result))
     return result;
@@ -1434,7 +1418,7 @@ nsImageFrame::TranslateEventCoords(const nsPoint& aPoint,
 
   // Translate the coordinates from twips to pixels
   float t2p;
-  t2p = PresContext()->TwipsToPixels();
+  t2p = GetPresContext()->TwipsToPixels();
   aResult.x = NSTwipsToIntPixels(x, t2p);
   aResult.y = NSTwipsToIntPixels(y, t2p);
 }
@@ -1563,7 +1547,7 @@ NS_IMETHODIMP
 nsImageFrame::GetCursor(const nsPoint& aPoint,
                         nsIFrame::Cursor& aCursor)
 {
-  nsPresContext* context = PresContext();
+  nsPresContext* context = GetPresContext();
   nsImageMap* map = GetImageMap(context);
   if (nsnull != map) {
     nsIntPoint p;
@@ -1576,7 +1560,7 @@ nsImageFrame::GetCursor(const nsPoint& aPoint,
       // here, since it means that areas on which the cursor isn't
       // specified will inherit the style from the image.
       nsRefPtr<nsStyleContext> areaStyle = 
-        PresContext()->PresShell()->StyleSet()->
+        GetPresContext()->PresShell()->StyleSet()->
           ResolveStyleFor(area, GetStyleContext());
       if (areaStyle) {
         FillCursorInformationFromStyle(areaStyle->GetStyleUserInterface(),
@@ -1603,9 +1587,10 @@ nsImageFrame::AttributeChanged(PRInt32 aNameSpaceID,
   }
   if (nsGkAtoms::alt == aAttribute)
   {
-    PresContext()->PresShell()->FrameNeedsReflow(this,
-                                                 nsIPresShell::eStyleChange,
-                                                 NS_FRAME_IS_DIRTY);
+    AddStateBits(NS_FRAME_IS_DIRTY);
+    GetPresContext()->PresShell()->FrameNeedsReflow(
+                                       NS_STATIC_CAST(nsIFrame*, this),
+                                       nsIPresShell::eStyleChange);
   }
 
   return NS_OK;

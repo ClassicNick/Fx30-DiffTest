@@ -291,14 +291,12 @@ protected:
   }
   virtual ~nsBlockFrame();
 
-#ifdef DEBUG
   already_AddRefed<nsStyleContext> GetFirstLetterStyle(nsPresContext* aPresContext)
   {
     return aPresContext->StyleSet()->
       ProbePseudoStyleFor(mContent,
                           nsCSSPseudoElements::firstLetter, mStyleContext);
   }
-#endif
 
   /*
    * Overides member function of nsHTMLContainerFrame. Needed to handle the 
@@ -356,11 +354,6 @@ protected:
 
 #ifdef IBMBIDI
   /**
-   * Perform Bidi resolution on this frame
-   */
-  nsresult ResolveBidi();
-
-  /**
    * Test whether the frame is a form control in a visual Bidi page.
    * This is necessary for backwards-compatibility, because most visual
    * pages use logical order for form controls so that they will
@@ -384,11 +377,6 @@ public:
     */
   nsresult DoRemoveFrame(nsIFrame* aDeletedFrame, PRBool aDestroyFrames = PR_TRUE, 
                          PRBool aRemoveOnlyFluidContinuations = PR_TRUE);
-
-  void ReparentFloats(nsIFrame* aFirstFrame,
-                      nsBlockFrame* aOldParent, PRBool aFromOverflow,
-                      PRBool aReparentSiblings);
-
 protected:
 
   /** grab overflow lines from this block's prevInFlow, and make them
@@ -404,7 +392,7 @@ protected:
   line_iterator RemoveFloat(nsIFrame* aFloat);
 
   void CollectFloats(nsIFrame* aFrame, nsFrameList& aList, nsIFrame** aTail,
-                     PRBool aFromOverflow, PRBool aCollectFromSiblings);
+                     PRBool aFromOverflow);
   // Remove a float, abs, rel positioned frame from the appropriate block's list
   static void DoRemoveOutOfFlowFrame(nsIFrame* aFrame);
 
@@ -480,7 +468,7 @@ protected:
   // but only if the available height is constrained.
   nsresult ReflowFloat(nsBlockReflowState& aState,
                        nsPlaceholderFrame* aPlaceholder,
-                       nsMargin&           aFloatMargin,
+                       nsFloatCache*       aFloatCache,
                        nsReflowStatus&     aReflowStatus);
 
   //----------------------------------------
@@ -518,6 +506,10 @@ protected:
   void PushLines(nsBlockReflowState& aState,
                  nsLineList::iterator aLineBefore);
 
+
+  void ReparentFloats(nsIFrame* aFirstFrame,
+                      nsBlockFrame* aOldParent, PRBool aFromOverflow);
+
   void PropagateFloatDamage(nsBlockReflowState& aState,
                             nsLineBox* aLine,
                             nscoord aDeltaY);
@@ -527,11 +519,7 @@ protected:
   //----------------------------------------
   // List handling kludge
 
-  // If this returns PR_TRUE, the block it's called on should get the
-  // NS_FRAME_HAS_DIRTY_CHILDREN bit set on it by the caller; either directly
-  // if it's already in reflow, or via calling FrameNeedsReflow() to schedule a
-  // reflow.
-  PRBool RenumberLists(nsPresContext* aPresContext);
+  void RenumberLists(nsPresContext* aPresContext);
 
   PRBool RenumberListsInBlock(nsPresContext* aPresContext,
                               nsBlockFrame* aContainerFrame,

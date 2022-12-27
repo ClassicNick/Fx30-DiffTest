@@ -83,9 +83,9 @@ public:
                                    nsPoint aPt);
   void PaintHeaderFooter(nsIRenderingContext& aRenderingContext,
                          nsPoint aPt);
-  void PaintPageContent(nsIRenderingContext& aRenderingContext,
-                        const nsRect&        aDirtyRect,
-                        nsPoint              aPt);
+  void DrawBackground(nsIRenderingContext& aRenderingContext,
+                      const nsRect&        aDirtyRect,
+                      nsPoint              aPt);
 
 protected:
   nsPageFrame(nsStyleContext* aContext);

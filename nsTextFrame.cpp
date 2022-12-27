@@ -105,16 +105,6 @@
 #include "nsBidiFrames.h"
 #include "nsBidiPresUtils.h"
 #include "nsBidiUtils.h"
-#include "nsTextFrameTextRunCache.h"
-
-nsresult
-nsTextFrameTextRunCache::Init() {
-  return NS_OK;
-}
-
-void
-nsTextFrameTextRunCache::Shutdown() {
-}
 
 #ifdef SUNCTL
 #include "nsILE.h"
@@ -331,8 +321,7 @@ public:
   {
     // Set the frame state bit for text frames to mark them as replaced.
     // XXX kipp: temporary
-    return nsFrame::IsFrameOfType(aFlags & ~(nsIFrame::eReplaced |
-                                             nsIFrame::eLineParticipant));
+    return nsFrame::IsFrameOfType(aFlags & ~(nsIFrame::eReplaced));
   }
   
 #ifdef DEBUG
@@ -904,8 +893,7 @@ nsTextStyle::nsTextStyle(nsPresContext* aPresContext,
   PRUint8 originalDecorations = plainFont->decorations;
   plainFont->decorations = NS_FONT_DECORATION_NONE;
   mAveCharWidth = 0;
-  // Set the font: some users of the struct expect this state
-  nsLayoutUtils::SetFontFromStyle(&aRenderingContext, sc);
+  SetFontFromStyle(&aRenderingContext, sc); // some users of the struct expect this state
   aRenderingContext.GetFontMetrics(mNormalFont);
   mNormalFont->GetSpaceWidth(mSpaceWidth);
   mNormalFont->GetAveCharWidth(mAveCharWidth);
@@ -1459,7 +1447,7 @@ nsContinuingTextFrame::Init(nsIContent*      aContent,
       PRInt32 start, end;
       aPrevInFlow->GetOffsets(start, mContentOffset);
 
-      nsPropertyTable *propTable = PresContext()->PropertyTable();
+      nsPropertyTable *propTable = GetPresContext()->PropertyTable();
       propTable->SetProperty(this, nsGkAtoms::embeddingLevel,
             propTable->GetProperty(aPrevInFlow, nsGkAtoms::embeddingLevel),
                              nsnull, nsnull);
@@ -1957,34 +1945,32 @@ nsTextFrame::CharacterDataChanged(nsPresContext* aPresContext,
 {
   nsIFrame* targetTextFrame = this;
 
+  PRBool markAllDirty = PR_TRUE;
   if (aAppend) {
-    nsTextFrame* frame = NS_STATIC_CAST(nsTextFrame*, GetLastContinuation());
+    markAllDirty = PR_FALSE;
+    nsTextFrame* frame = NS_STATIC_CAST(nsTextFrame*, GetLastInFlow());
     frame->mState &= ~TEXT_WHITESPACE_FLAGS;
+    frame->mState |= NS_FRAME_IS_DIRTY;
     targetTextFrame = frame;
-  } else {
+  }
+
+  if (markAllDirty) {
     // Mark this frame and all the next-in-flow frames as dirty and reset all
     // the content offsets and lengths to 0, since they no longer know what
     // content is ok to access.
-
-    // Don't set NS_FRAME_IS_DIRTY on |this|, since we call FrameNeedsReflow
-    // below.
     nsTextFrame*  textFrame = this;
-    do {
+    while (textFrame) {
       textFrame->mState &= ~TEXT_WHITESPACE_FLAGS;
+      textFrame->mState |= NS_FRAME_IS_DIRTY;
       textFrame->mContentOffset = 0;
       textFrame->mContentLength = 0;
       textFrame = NS_STATIC_CAST(nsTextFrame*, textFrame->GetNextContinuation());
-      if (!textFrame) {
-        break;
-      }
-      textFrame->mState |= NS_FRAME_IS_DIRTY;
-    } while (1);
+    }
   }
 
   // Ask the parent frame to reflow me.  
   aPresContext->GetPresShell()->FrameNeedsReflow(targetTextFrame,
-                                                 nsIPresShell::eStyleChange,
-                                                 NS_FRAME_IS_DIRTY);
+                                                 nsIPresShell::eStyleChange);
 
   return NS_OK;
 }
@@ -2036,7 +2022,7 @@ void
 nsTextFrame::PaintText(nsIRenderingContext& aRenderingContext, nsPoint aPt)
 {
   nsStyleContext* sc = mStyleContext;
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   nsCOMPtr<nsIContent> content;
   PRInt32 offset, length;
   GetContentAndOffsetsForSelection(presContext,
@@ -2154,7 +2140,7 @@ nsTextFrame::FillClusterBuffer(nsPresContext *aPresContext, const PRUnichar *aTe
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Find the font metrics for this text
-    nsLayoutUtils::SetFontFromStyle(acx, mStyleContext);
+    SetFontFromStyle(acx, mStyleContext);
 
     acx->GetHints(clusterHint);
     clusterHint &= NS_RENDERING_HINT_TEXT_CLUSTERS;
@@ -2799,7 +2785,7 @@ nsTextFrame::IsTextInSelection()
   PRBool  isSelected;
   PRBool  hideStandardSelection;
   PRInt16 selectionValue;
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   if (NS_FAILED(GetTextInfoForPainting(presContext, 
                                        getter_AddRefs(shell),
                                        getter_AddRefs(selCon),
@@ -3191,7 +3177,7 @@ nsTextFrame::GetPositionSlowly(nsIRenderingContext* aRendContext,
   // initialize out param
   *aNewContent = nsnull;
 
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   nsTextStyle ts(presContext, *aRendContext, mStyleContext);
   SetupTextRunDirection(presContext, aRendContext);
   if (!ts.mSmallCaps && !ts.mWordSpacing && !ts.mLetterSpacing && !ts.mJustifying) {
@@ -3232,7 +3218,7 @@ nsTextFrame::GetPositionSlowly(nsIRenderingContext* aRendContext,
   }
 
   // Transform text from content into renderable form
-  nsTextTransformer tx(PresContext());
+  nsTextTransformer tx(GetPresContext());
   PRInt32 textLength;
   PRIntn numJustifiableCharacter;
 
@@ -4121,7 +4107,7 @@ nsTextFrame::GetPositionHelper(const nsPoint&  aPoint,
   if (mState & NS_FRAME_IS_DIRTY)
     return NS_ERROR_UNEXPECTED;
 
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   nsIPresShell *shell = presContext->GetPresShell();
   if (shell) {
     nsCOMPtr<nsIRenderingContext> rendContext;      
@@ -4145,10 +4131,10 @@ nsTextFrame::GetPositionHelper(const nsPoint&  aPoint,
       }
 
       // Find the font metrics for this text
-      nsLayoutUtils::SetFontFromStyle(rendContext, mStyleContext);
+      SetFontFromStyle(rendContext, mStyleContext);
 
       // Get the renderable form of the text
-      nsTextTransformer tx(PresContext());
+      nsTextTransformer tx(GetPresContext());
       PRInt32 textLength;
       // no need to worry about justification, that's always on the slow path
       PrepareUnicodeText(tx, &indexBuffer, &paintBuffer, &textLength);
@@ -4548,7 +4534,7 @@ nsTextFrame::PeekOffsetCharacter(PRBool aForward, PRInt32* aOffset)
   if (startOffset < 0)
     startOffset = mContentLength;
 
-  nsPresContext* presContext = PresContext();
+  nsPresContext* presContext = GetPresContext();
   
   // Transform text from content into renderable form
   nsAutoTextBuffer paintBuffer;
@@ -4683,7 +4669,7 @@ nsTextFrame::PeekOffsetWord(PRBool aForward, PRBool aWordSelectEatSpace, PRBool 
   if (startOffset < 0)
     startOffset = mContentLength;
   
-  nsTextTransformer tx(PresContext());
+  nsTextTransformer tx(GetPresContext());
   PRBool keepSearching = PR_TRUE; //if you run out of chars before you hit the end of word, maybe next frame has more text to select?
   PRBool found = PR_FALSE;
   PRBool isWhitespace, wasTransformed;
@@ -5010,12 +4996,9 @@ static PRBool CanBreakBetween(nsTextFrame* aBefore,
     firstAfter = fragAfter->CharAt(afterOffset);
   }
   while (IS_DISCARDED(lastBefore)) {
+    NS_ASSERTION(beforeOffset > 0,
+                 "Before-textframe maps no content, should not have called SetTrailingTextFrame");
     --beforeOffset;
-    if (beforeOffset == 0) {
-      // aBefore was entirely skipped. Who knows why it called SetTrailingTextFrame.
-      NS_WARNING("Before-frame should not have called SetTrailingTextFrame");
-      return PR_FALSE;
-    }
     lastBefore = fragBefore->CharAt(beforeOffset - 1);
   }
 
@@ -5692,7 +5675,7 @@ nsTextFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
 {
   nsresult rv;
 
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   nsTextStyle ts(presContext, *aRenderingContext, mStyleContext);
   SetupTextRunDirection(presContext, aRenderingContext);
   if (!ts.mFont->mSize)
@@ -5727,7 +5710,7 @@ nsTextFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
                       aData->skipWhitespace, // XXX ???
                       nsnull)) // XXX Better to pass real frame
   {
-    aData->OptionallyBreak(aRenderingContext);
+    aData->Break(aRenderingContext);
   }
 
   for (;;) {
@@ -5753,7 +5736,7 @@ nsTextFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
         firstChar = *bp2;
       }
       if ('\n' == firstChar) {
-        aData->ForceBreak(aRenderingContext);
+        aData->Break(aRenderingContext);
         aData->skipWhitespace = PR_TRUE;
         aData->trailingWhitespace = 0;
       } else if (!aData->skipWhitespace || wsSignificant) {
@@ -5771,7 +5754,6 @@ nsTextFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
             wordLen*(ts.mWordSpacing + ts.mLetterSpacing + ts.mSpaceWidth);// XXX simplistic
         }
         aData->currentLine += width;
-        aData->atStartOfLine = PR_FALSE;
         if (wsSignificant) {
           aData->trailingWhitespace = 0;
           aData->skipWhitespace = PR_FALSE;
@@ -5781,12 +5763,12 @@ nsTextFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
         }
 
         if (wrapping) {
-          aData->OptionallyBreak(aRenderingContext);
+          aData->Break(aRenderingContext);
         }
       }
     } else {
       if (!atStart && wrapping) {
-        aData->OptionallyBreak(aRenderingContext);
+        aData->Break(aRenderingContext);
       }
 
       atStart = PR_FALSE;
@@ -5819,7 +5801,6 @@ nsTextFrame::AddInlineMinWidth(nsIRenderingContext *aRenderingContext,
       }
 
       aData->currentLine += width;
-      aData->atStartOfLine = PR_FALSE;
       aData->skipWhitespace = PR_FALSE;
       aData->trailingWhitespace = 0;
     }
@@ -5834,7 +5815,7 @@ nsTextFrame::AddInlinePrefWidth(nsIRenderingContext *aRenderingContext,
 {
   nsresult rv;
 
-  nsPresContext *presContext = PresContext();
+  nsPresContext *presContext = GetPresContext();
   nsTextStyle ts(presContext, *aRenderingContext, mStyleContext);
   if (!ts.mFont->mSize)
     // XXX If font size is zero, we still need to figure out whether we've
@@ -5880,7 +5861,7 @@ nsTextFrame::AddInlinePrefWidth(nsIRenderingContext *aRenderingContext,
         firstChar = *bp2;
       }
       if ('\n' == firstChar) {
-        aData->ForceBreak(aRenderingContext);
+        aData->Break(aRenderingContext);
       } else if (!aData->skipWhitespace) {
         nscoord width;
         if ('\t' == firstChar) {
@@ -6189,7 +6170,7 @@ nsTextFrame::Reflow(nsPresContext*          aPresContext,
 
 #ifdef MOZ_MATHML
     if (calcMathMLMetrics) {
-      nsLayoutUtils::SetFontFromStyle(aReflowState.rendContext, mStyleContext);
+      SetFontFromStyle(aReflowState.rendContext, mStyleContext);
       nsBoundingMetrics bm;
       rv = aReflowState.rendContext->GetBoundingMetrics(textBuffer.mBuffer, textLength, bm);
       if (NS_SUCCEEDED(rv))
@@ -6293,7 +6274,7 @@ nsTextFrame::TrimTrailingWhiteSpace(nsPresContext* aPresContext,
         if (XP_IS_SPACE(ch)) {
           // Get font metrics for a space so we can adjust the width by the
           // right amount.
-          nsLayoutUtils::SetFontFromStyle(&aRC, mStyleContext);
+          SetFontFromStyle(&aRC, mStyleContext);
 
           aRC.GetWidth(' ', dw);
           // NOTE: Trailing whitespace includes word and letter spacing!

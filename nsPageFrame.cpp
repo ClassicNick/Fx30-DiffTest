@@ -416,10 +416,10 @@ static void PaintPrintPreviewBackground(nsIFrame* aFrame, nsIRenderingContext* a
   NS_STATIC_CAST(nsPageFrame*, aFrame)->PaintPrintPreviewBackground(*aCtx, aPt);
 }
 
-static void PaintPageContent(nsIFrame* aFrame, nsIRenderingContext* aCtx,
-                             const nsRect& aDirtyRect, nsPoint aPt)
+static void PaintPageBackground(nsIFrame* aFrame, nsIRenderingContext* aCtx,
+                                const nsRect& aDirtyRect, nsPoint aPt)
 {
-  NS_STATIC_CAST(nsPageFrame*, aFrame)->PaintPageContent(*aCtx, aDirtyRect, aPt);
+  NS_STATIC_CAST(nsPageFrame*, aFrame)->DrawBackground(*aCtx, aDirtyRect, aPt);
 }
 
 static void PaintHeaderFooter(nsIFrame* aFrame, nsIRenderingContext* aCtx,
@@ -437,17 +437,17 @@ nsPageFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   nsDisplayListCollection set;
   nsresult rv;
 
-  if (PresContext()->IsScreen()) {
+  if (GetPresContext()->IsScreen()) {
     rv = set.BorderBackground()->AppendNewToTop(new (aBuilder)
         nsDisplayGeneric(this, ::PaintPrintPreviewBackground, "PrintPreviewBackground"));
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   rv = set.BorderBackground()->AppendNewToTop(new (aBuilder)
-        nsDisplayGeneric(this, ::PaintPageContent, "PageContent"));
+        nsDisplayGeneric(this, ::PaintPageBackground, "PageBackground"));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (PresContext()->IsRootPaginatedDocument()) {
+  if (GetPresContext()->IsRootPaginatedDocument()) {
     rv = set.Content()->AppendNewToTop(new (aBuilder)
         nsDisplayGeneric(this, ::PaintHeaderFooter, "HeaderFooter"));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -505,7 +505,7 @@ void
 nsPageFrame::PaintHeaderFooter(nsIRenderingContext& aRenderingContext,
                                nsPoint aPt)
 {
-  nsPresContext* pc = PresContext();
+  nsPresContext* pc = GetPresContext();
 
   if (!mPD->mPrintSettings) {
     if (pc->Type() == nsPresContext::eContext_PrintPreview || pc->IsDynamic())
@@ -551,34 +551,22 @@ nsPageFrame::PaintHeaderFooter(nsIRenderingContext& aRenderingContext,
 
 //------------------------------------------------------------------------------
 void
-nsPageFrame::PaintPageContent(nsIRenderingContext& aRenderingContext,
-                              const nsRect&        aDirtyRect,
-                              nsPoint              aPt) {
-  nsIFrame* pageContentFrame  = mFrames.FirstChild();
-  nsRect rect = aDirtyRect;
-  aRenderingContext.PushState();
-  // Make sure we don't draw where we aren't supposed to draw, especially
-  // when printing selection
-  nsRect clipRect(nsPoint(0, 0), GetSize());
-  clipRect.Deflate(mPD->mReflowMargin);
-  aRenderingContext.SetClipRect(clipRect, nsClipCombine_kIntersect);
-  // aPt translates to coords relative to this, then margins translate to
-  // pageContentFrame's coords
-  nsPoint framePos = aPt + pageContentFrame->GetOffsetTo(this);
-  aRenderingContext.Translate(framePos.x, framePos.y);
-  rect -= framePos;
+nsPageFrame::DrawBackground(nsIRenderingContext& aRenderingContext,
+                            const nsRect&        aDirtyRect,
+                            nsPoint              aPt) 
+{
+  nsSimplePageSequenceFrame* seqFrame = NS_STATIC_CAST(nsSimplePageSequenceFrame*, mParent);
+  if (seqFrame != nsnull) {
+    nsIFrame* pageContentFrame  = mFrames.FirstChild();
+    NS_ASSERTION(pageContentFrame, "Must always be there.");
 
-  const nsStyleBorder* border = GetStyleBorder();
-  const nsStylePadding* padding = GetStylePadding();
-  nsRect backgroundRect = nsRect(nsPoint(0, 0), pageContentFrame->GetSize());
-  nsCSSRendering::PaintBackground(PresContext(), aRenderingContext, this,
-                                  rect, backgroundRect, *border, *padding,
-                                  PR_TRUE);
+    const nsStyleBorder* border = GetStyleBorder();
+    const nsStylePadding* padding = GetStylePadding();
 
-  nsLayoutUtils::PaintFrame(&aRenderingContext, pageContentFrame,
-                            nsRegion(rect), NS_RGBA(0,0,0,0));
-
-  aRenderingContext.PopState();
+    nsCSSRendering::PaintBackground(GetPresContext(), aRenderingContext, this,
+                                    aDirtyRect, pageContentFrame->GetRect() + aPt, *border, *padding,
+                                    PR_TRUE);
+  }
 }
 
 void
@@ -615,7 +603,7 @@ nsPageBreakFrame::~nsPageBreakFrame()
 nscoord
 nsPageBreakFrame::GetIntrinsicWidth()
 {
-  return PresContext()->IntScaledPixelsToTwips(1);
+  return GetPresContext()->IntScaledPixelsToTwips(1);
 }
 
 nsresult 
@@ -633,7 +621,7 @@ nsPageBreakFrame::Reflow(nsPresContext*          aPresContext,
   aDesiredSize.height = aReflowState.availableHeight;
   // round the height down to the nearest pixel
   aDesiredSize.height -=
-    aDesiredSize.height % PresContext()->IntScaledPixelsToTwips(1);
+    aDesiredSize.height % GetPresContext()->IntScaledPixelsToTwips(1);
 
   // Note: not using NS_FRAME_FIRST_REFLOW here, since it's not clear whether
   // DidReflow will always get called before the next Reflow() call.
