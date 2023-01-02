@@ -87,11 +87,10 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsBaseContentList)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 // QueryInterface implementation for nsBaseContentList
-NS_INTERFACE_MAP_BEGIN(nsBaseContentList)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsBaseContentList)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNodeList)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNodeList)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(NodeList)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsBaseContentList)
 NS_INTERFACE_MAP_END
 
 
@@ -186,13 +185,6 @@ struct ContentListHashEntry : public PLDHashEntryHdr
   nsContentList* mContentList;
 };
 
-PR_STATIC_CALLBACK(const void *)
-ContentListHashtableGetKey(PLDHashTable *table, PLDHashEntryHdr *entry)
-{
-  ContentListHashEntry *e = NS_STATIC_CAST(ContentListHashEntry *, entry);
-  return e->mContentList->GetKey();
-}
-
 PR_STATIC_CALLBACK(PLDHashNumber)
 ContentListHashtableHashKey(PLDHashTable *table, const void *key)
 {
@@ -225,7 +217,6 @@ NS_GetContentList(nsINode* aRootNode, nsIAtom* aMatchAtom,
   {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    ContentListHashtableGetKey,
     ContentListHashtableHashKey,
     ContentListHashtableMatchEntry,
     PL_DHashMoveEntryStub,

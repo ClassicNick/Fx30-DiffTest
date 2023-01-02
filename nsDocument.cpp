@@ -145,6 +145,7 @@ static NS_DEFINE_CID(kDOMEventGroupCID, NS_DOMEVENTGROUP_CID);
 #include "nsDateTimeFormatCID.h"
 #include "nsIDateTimeFormat.h"
 #include "nsEventDispatcher.h"
+#include "nsMutationEvent.h"
 #include "nsIDOMXPathEvaluator.h"
 #include "nsDOMCID.h"
 
@@ -152,6 +153,7 @@ static NS_DEFINE_CID(kDOMEventGroupCID, NS_DOMEVENTGROUP_CID);
 #include "nsIJSContextStack.h"
 #include "nsIXPConnect.h"
 #include "nsCycleCollector.h"
+#include "nsCCUncollectableMarker.h"
 
 #ifdef MOZ_LOGGING
 // so we can get logging even in release builds
@@ -855,11 +857,6 @@ nsDocument::~nsDocument()
     NS_RELEASE(mCSSLoader);
   }
 
-  // We must delete properties before dropping document reference from
-  // NodeInfoManager, because nsNodeUtils::LastRelease can't remove properties
-  // when owner document is null.
-  mPropertyTable.DeleteAllProperties();
-
   // XXX Ideally we'd do this cleanup in the nsIDocument destructor.
   if (mNodeInfoManager) {
     mNodeInfoManager->DropDocumentReference();
@@ -882,21 +879,9 @@ nsDocument::~nsDocument()
   nsLayoutStatics::Release();
 }
 
-void
-nsDocument::LastRelease()
-{
-  nsNodeUtils::LastRelease(this, PR_FALSE);
-  // Delete properties before starting to destruct the document.
-  // Some of the properties are bound to nsINode objects and the destructor
-  // functions of the properties may want to use the owner document of the
-  // nsINode.
-  mPropertyTable.DeleteAllProperties();
-  delete this;
-}
-
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDocument)
 
-NS_INTERFACE_MAP_BEGIN(nsDocument)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDocument)
   NS_INTERFACE_MAP_ENTRY(nsIDocument)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDocument)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSDocument)
@@ -909,7 +894,6 @@ NS_INTERFACE_MAP_BEGIN(nsDocument)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDocumentTraversal)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDocumentXBL)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventReceiver)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOM3EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSEventTarget)
@@ -921,7 +905,6 @@ NS_INTERFACE_MAP_BEGIN(nsDocument)
   NS_INTERFACE_MAP_ENTRY(nsIRadioGroupContainer)
   NS_INTERFACE_MAP_ENTRY(nsINode)
   NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(nsDocument)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDocument)
   if (aIID.Equals(NS_GET_IID(nsIDOMXPathEvaluator)) ||
       aIID.Equals(NS_GET_IID(nsIXPathEvaluatorInternal))) {
@@ -942,7 +925,7 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsDocument, nsIDocument)
 NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS_WITH_DESTROY(nsDocument, 
                                                         nsIDocument,
-                                                        LastRelease())
+                                                        nsNodeUtils::LastRelease(this))
 
 
 PR_STATIC_CALLBACK(PLDHashOperator)
@@ -1010,10 +993,16 @@ LinkMapTraverser(nsUint32ToContentHashEntry* aEntry, void* userArg)
 }
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDocument)
+  if (nsCCUncollectableMarker::InGeneration(tmp->GetMarkedCCGeneration())) {
+    return NS_OK;
+  }
+
   // Traverse the mChildren nsAttrAndChildArray.
   for (PRInt32 indx = PRInt32(tmp->mChildren.ChildCount()); indx > 0; --indx) {
     cb.NoteXPCOMChild(tmp->mChildren.ChildAt(indx - 1));
   }
+
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_USERDATA
 
   // Traverse all nsIDocument pointer members.
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mBindingManager)
@@ -1069,6 +1058,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
     tmp->mChildren.RemoveChildAt(indx);
   }
 
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_USERDATA
+
   // Unlink any associated preserved wrapper.
   tmp->RemoveReference(tmp);
 
@@ -1087,7 +1078,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 nsresult
 nsDocument::Init()
 {
-  if (mBindingManager || mCSSLoader || mNodeInfoManager) {
+  if (mBindingManager || mCSSLoader || mNodeInfoManager || mScriptLoader) {
     return NS_ERROR_ALREADY_INITIALIZED;
   }
 
@@ -1134,6 +1125,9 @@ nsDocument::Init()
   NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   NS_ASSERTION(GetOwnerDoc() == this, "Our nodeinfo is busted!");
+
+  mScriptLoader = new nsScriptLoader(this);
+  NS_ENSURE_TRUE(mScriptLoader, NS_ERROR_OUT_OF_MEMORY);
 
   return NS_OK;
 }
@@ -1303,9 +1297,10 @@ nsDocument::ResetStylesheetsToURI(nsIURI* aURI)
     PRBool applicable;
     sheet->GetApplicable(applicable);
     if (applicable) {
-      for (PRInt32 i = 0, i_end = GetNumberOfShells(); i < i_end; ++i) {
-        GetShellAt(i)->StyleSet()->
-          RemoveStyleSheet(nsStyleSet::eAgentSheet, sheet);
+      nsPresShellIterator iter(this);
+      nsCOMPtr<nsIPresShell> shell;
+      while ((shell = iter.GetNextShell())) {
+        shell->StyleSet()->RemoveStyleSheet(nsStyleSet::eAgentSheet, sheet);
       }
     }
 
@@ -1324,10 +1319,10 @@ nsDocument::ResetStylesheetsToURI(nsIURI* aURI)
   nsStyleSet::sheetType attrSheetType = GetAttrSheetType();
   if (mAttrStyleSheet) {
     // Remove this sheet from all style sets
-    PRInt32 count = GetNumberOfShells();
-    for (indx = 0; indx < count; ++indx) {
-      GetShellAt(indx)->StyleSet()->
-        RemoveStyleSheet(attrSheetType, mAttrStyleSheet);
+    nsPresShellIterator iter(this);
+    nsCOMPtr<nsIPresShell> shell;
+    while ((shell = iter.GetNextShell())) {
+      shell->StyleSet()->RemoveStyleSheet(attrSheetType, mAttrStyleSheet);
     }
     rv = mAttrStyleSheet->Reset(aURI);
   } else {
@@ -1341,9 +1336,10 @@ nsDocument::ResetStylesheetsToURI(nsIURI* aURI)
   
   if (mStyleAttrStyleSheet) {
     // Remove this sheet from all style sets
-    PRInt32 count = GetNumberOfShells();
-    for (indx = 0; indx < count; ++indx) {
-      GetShellAt(indx)->StyleSet()->
+    nsPresShellIterator iter(this);
+    nsCOMPtr<nsIPresShell> shell;
+    while ((shell = iter.GetNextShell())) {
+      shell->StyleSet()->
         RemoveStyleSheet(nsStyleSet::eStyleAttrSheet, mStyleAttrStyleSheet);
     }
     rv = mStyleAttrStyleSheet->Reset(aURI);
@@ -1358,9 +1354,10 @@ nsDocument::ResetStylesheetsToURI(nsIURI* aURI)
   mStyleAttrStyleSheet->SetOwningDocument(this);
 
   // Now set up our style sets
-  PRInt32 count = GetNumberOfShells();
-  for (indx = 0; indx < count; ++indx) {
-    FillStyleSet(GetShellAt(indx)->StyleSet());
+  nsPresShellIterator iter(this);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
+    FillStyleSet(shell->StyleSet());
   }
 
   return rv;
@@ -1959,7 +1956,7 @@ nsDocument::doCreateShell(nsPresContext* aContext,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Note: we don't hold a ref to the shell (it holds a ref to us)
-  mPresShells.AppendElement(shell);
+  NS_ENSURE_TRUE(mPresShells.AppendObserver(shell), NS_ERROR_OUT_OF_MEMORY);
   shell.swap(*aInstancePtrResult);
 
   return NS_OK;
@@ -1968,26 +1965,14 @@ nsDocument::doCreateShell(nsPresContext* aContext,
 PRBool
 nsDocument::DeleteShell(nsIPresShell* aShell)
 {
-  return mPresShells.RemoveElement(aShell);
+  return mPresShells.RemoveObserver(aShell);
 }
 
-PRUint32
-nsDocument::GetNumberOfShells() const
-{
-  return mShellsAreHidden ? 0 : mPresShells.Count();
-}
 
 nsIPresShell *
-nsDocument::GetShellAt(PRUint32 aIndex) const
+nsDocument::GetPrimaryShell() const
 {
-  return mShellsAreHidden ? nsnull :
-         NS_STATIC_CAST(nsIPresShell*, mPresShells.SafeElementAt(aIndex));
-}
-
-void
-nsDocument::SetShellsHidden(PRBool aHide)
-{
-  mShellsAreHidden = aHide;
+  return mShellsAreHidden ? nsnull : mPresShells.SafeObserverAt(0);
 }
 
 PR_STATIC_CALLBACK(void)
@@ -2042,7 +2027,6 @@ nsDocument::SetSubDocumentFor(nsIContent *aContent, nsIDocument* aSubDoc)
       {
         PL_DHashAllocTable,
         PL_DHashFreeTable,
-        PL_DHashGetKeyStub,
         PL_DHashVoidPtrKeyStub,
         PL_DHashMatchEntryStub,
         PL_DHashMoveEntryStub,
@@ -2282,10 +2266,10 @@ nsDocument::GetIndexOfStyleSheet(nsIStyleSheet* aSheet) const
 void
 nsDocument::AddStyleSheetToStyleSets(nsIStyleSheet* aSheet)
 {
-  PRInt32 count = GetNumberOfShells();
-  PRInt32 indx;
-  for (indx = 0; indx < count; ++indx) {
-    GetShellAt(indx)->StyleSet()->AddDocStyleSheet(aSheet, this);
+  nsPresShellIterator iter(this);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
+    shell->StyleSet()->AddDocStyleSheet(aSheet, this);
   }
 }
 
@@ -2309,9 +2293,11 @@ nsDocument::AddStyleSheet(nsIStyleSheet* aSheet)
 void
 nsDocument::RemoveStyleSheetFromStyleSets(nsIStyleSheet* aSheet)
 {
-  for (PRInt32 i = 0, i_end = GetNumberOfShells(); i < i_end; ++i)
-    GetShellAt(i)->StyleSet()->
-      RemoveStyleSheet(nsStyleSet::eDocSheet, aSheet);
+  nsPresShellIterator iter(this);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
+    shell->StyleSet()->RemoveStyleSheet(nsStyleSet::eDocSheet, aSheet);
+  }
 }
 
 void
@@ -2446,9 +2432,11 @@ nsDocument::AddCatalogStyleSheet(nsIStyleSheet* aSheet)
                                                                                 
   if (applicable) {
     // This is like |AddStyleSheetToStyleSets|, but for an agent sheet.
-    for (PRInt32 i = 0, i_end = GetNumberOfShells(); i < i_end; ++i)
-      GetShellAt(i)->StyleSet()->
-        AppendStyleSheet(nsStyleSet::eAgentSheet, aSheet);
+    nsPresShellIterator iter(this);
+    nsCOMPtr<nsIPresShell> shell;
+    while ((shell = iter.GetNextShell())) {
+      shell->StyleSet()->AppendStyleSheet(nsStyleSet::eAgentSheet, aSheet);
+    }
   }
                                                                                 
   NS_DOCUMENT_NOTIFY_OBSERVERS(StyleSheetAdded, (this, aSheet, PR_FALSE));
@@ -2570,12 +2558,8 @@ nsDocument::GetInnerWindow()
 }
 
 nsScriptLoader*
-nsDocument::GetScriptLoader()
+nsDocument::ScriptLoader()
 {
-  if (!mScriptLoader) {
-    mScriptLoader = new nsScriptLoader(this);
-  }
-
   return mScriptLoader;
 }
 
@@ -2619,6 +2603,10 @@ nsDocument::RemoveObserver(nsIDocumentObserver* aObserver)
 void
 nsDocument::BeginUpdate(nsUpdateType aUpdateType)
 {
+  if (mUpdateNestLevel == 0) {
+    mBindingManager->BeginOutermostUpdate();
+  }
+  
   ++mUpdateNestLevel;
   if (mScriptLoader) {
     mScriptLoader->AddExecuteBlocker();
@@ -2633,9 +2621,9 @@ nsDocument::EndUpdate(nsUpdateType aUpdateType)
 
   --mUpdateNestLevel;
   if (mUpdateNestLevel == 0) {
-    // This set of updates may have created XBL bindings.  Run the
-    // constructors.
-    mBindingManager->ProcessAttachedQueue();
+    // This set of updates may have created XBL bindings.  Let the
+    // binding manager know we're done.
+    mBindingManager->EndOutermostUpdate();
   }
 
   if (mScriptLoader) {
@@ -2770,7 +2758,7 @@ nsDocument::DispatchContentLoadedEvents()
         if (innerEvent) {
           nsEventStatus status = nsEventStatus_eIgnore;
 
-          nsIPresShell *shell = ancestor_doc->GetShellAt(0);
+          nsIPresShell *shell = ancestor_doc->GetPrimaryShell();
           if (shell) {
             nsCOMPtr<nsPresContext> context = shell->GetPresContext();
 
@@ -3636,9 +3624,9 @@ nsDocument::GetTitle(nsAString& aTitle)
 NS_IMETHODIMP
 nsDocument::SetTitle(const nsAString& aTitle)
 {
-  for (PRInt32 i = GetNumberOfShells() - 1; i >= 0; --i) {
-    nsCOMPtr<nsIPresShell> shell = GetShellAt(i);
-
+  nsPresShellIterator iter(this);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
     nsCOMPtr<nsISupports> container = shell->GetPresContext()->GetContainer();
     if (!container)
       continue;
@@ -3666,8 +3654,10 @@ nsDocument::GetBoxObjectFor(nsIDOMElement* aElement, nsIBoxObject** aResult)
 {
   nsCOMPtr<nsIContent> content(do_QueryInterface(aElement));
   NS_ENSURE_TRUE(content, NS_ERROR_UNEXPECTED);
-  NS_ENSURE_TRUE(content->GetCurrentDoc() == this,
-                 NS_ERROR_DOM_WRONG_DOCUMENT_ERR);
+
+  nsIDocument* doc = content->HasFlag(NODE_FORCE_XBL_BINDINGS) ?
+    content->GetOwnerDoc() : content->GetCurrentDoc();
+  NS_ENSURE_TRUE(doc == this, NS_ERROR_DOM_WRONG_DOCUMENT_ERR);
   
   *aResult = nsnull;
 
@@ -3799,7 +3789,7 @@ nsDocument::SetDir(const nsAString& aDirection)
     if (aDirection == NS_ConvertASCIItoUTF16(elt->mName)) {
       if (GET_BIDI_OPTION_DIRECTION(options) != elt->mValue) {
         SET_BIDI_OPTION_DIRECTION(options, elt->mValue);
-        nsIPresShell *shell = GetShellAt(0);
+        nsIPresShell *shell = GetPrimaryShell();
         if (shell) {
           nsPresContext *context = shell->GetPresContext();
           NS_ENSURE_TRUE(context, NS_ERROR_UNEXPECTED);
@@ -4156,27 +4146,14 @@ nsDocument::SetUserData(const nsAString &aKey,
                         nsIDOMUserDataHandler *aHandler,
                         nsIVariant **aResult)
 {
-  nsCOMPtr<nsIAtom> key = do_GetAtom(aKey);
-  if (!key) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  return nsContentUtils::SetUserData(this, key, aData, aHandler, aResult);
+  return nsNodeUtils::SetUserData(this, aKey, aData, aHandler, aResult);
 }
 
 NS_IMETHODIMP
 nsDocument::GetUserData(const nsAString &aKey,
                         nsIVariant **aResult)
 {
-  nsCOMPtr<nsIAtom> key = do_GetAtom(aKey);
-  if (!key) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  *aResult = NS_STATIC_CAST(nsIVariant*, GetProperty(DOM_USER_DATA, key));
-  NS_IF_ADDREF(*aResult);
-
-  return NS_OK;
+  return nsNodeUtils::GetUserData(this, aKey, aResult);
 }
 
 NS_IMETHODIMP
@@ -4533,7 +4510,7 @@ nsDocument::GetOwnerDocument(nsIDOMDocument** aOwnerDocument)
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsDocument::GetListenerManager(PRBool aCreateIfNotFound,
                                nsIEventListenerManager** aInstancePtrResult)
 {
@@ -4560,13 +4537,6 @@ nsDocument::GetListenerManager(PRBool aCreateIfNotFound,
 }
 
 nsresult
-nsDocument::HandleEvent(nsIDOMEvent *aEvent)
-{
-  PRBool defaultActionEnabled;
-  return DispatchEvent(aEvent, &defaultActionEnabled);
-}
-
-NS_IMETHODIMP
 nsDocument::GetSystemEventGroup(nsIDOMEventGroup **aGroup)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
@@ -4659,7 +4629,7 @@ NS_IMETHODIMP
 nsDocument::DispatchEvent(nsIDOMEvent* aEvent, PRBool *_retval)
 {
   // Obtain a presentation context
-  nsIPresShell *shell = GetShellAt(0);
+  nsIPresShell *shell = GetPrimaryShell();
   nsCOMPtr<nsPresContext> context;
   if (shell) {
      context = shell->GetPresContext();
@@ -4748,7 +4718,7 @@ nsDocument::CreateEvent(const nsAString& aEventType, nsIDOMEvent** aReturn)
 
   // Obtain a presentation shell
 
-  nsIPresShell *shell = GetShellAt(0);
+  nsIPresShell *shell = GetPrimaryShell();
 
   nsPresContext *presContext = nsnull;
 
@@ -4828,14 +4798,10 @@ nsDocument::FlushPendingNotifications(mozFlushType aType)
     }
   }
 
-  PRInt32 i, count = GetNumberOfShells();
-
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsIPresShell> shell = GetShellAt(i);
-
-    if (shell) {
-      shell->FlushPendingNotifications(aType);
-    }
+  nsPresShellIterator iter(this);
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell())) {
+    shell->FlushPendingNotifications(aType);
   }
 }
 
@@ -5284,14 +5250,11 @@ PRBool
 nsDocument::IsSafeToFlush() const
 {
   PRBool isSafeToFlush = PR_TRUE;
-  PRInt32 i = 0, n = GetNumberOfShells();
-  while (i < n && isSafeToFlush) {
-    nsIPresShell* shell = GetShellAt(i);
-
-    if (shell) {
-      shell->IsSafeToFlush(isSafeToFlush);
-    }
-    ++i;
+  nsPresShellIterator iter(NS_CONST_CAST(nsIDocument*,
+                           NS_STATIC_CAST(const nsIDocument*, this)));
+  nsCOMPtr<nsIPresShell> shell;
+  while ((shell = iter.GetNextShell()) && isSafeToFlush) {
+    shell->IsSafeToFlush(isSafeToFlush);
   }
   return isSafeToFlush;
 }
@@ -5425,10 +5388,10 @@ PRBool
 nsDocument::CanSavePresentation(nsIRequest *aNewRequest)
 {
   // Check our event listener manager for unload/beforeunload listeners.
-  nsCOMPtr<nsIDOMEventReceiver> er = do_QueryInterface(mScriptGlobalObject);
-  if (er) {
+  nsCOMPtr<nsPIDOMEventTarget> piTarget = do_QueryInterface(mScriptGlobalObject);
+  if (piTarget) {
     nsCOMPtr<nsIEventListenerManager> manager;
-    er->GetListenerManager(PR_FALSE, getter_AddRefs(manager));
+    piTarget->GetListenerManager(PR_FALSE, getter_AddRefs(manager));
     if (manager && manager->HasUnloadListeners()) {
       return PR_FALSE;
     }
@@ -5702,6 +5665,72 @@ nsDocument::OnPageHide(PRBool aPersisted)
   DispatchEventToWindow(&event);
 
   mVisible = PR_FALSE;
+}
+
+void
+nsDocument::WillDispatchMutationEvent(nsINode* aTarget)
+{
+  NS_ASSERTION(mSubtreeModifiedDepth != 0 ||
+               mSubtreeModifiedTargets.Count() == 0,
+               "mSubtreeModifiedTargets not cleared after dispatching?");
+  ++mSubtreeModifiedDepth;
+  if (aTarget) {
+    mSubtreeModifiedTargets.AppendObject(aTarget);
+  }
+}
+
+void
+nsDocument::MutationEventDispatched(nsINode* aTarget)
+{
+  --mSubtreeModifiedDepth;
+  if (mSubtreeModifiedDepth == 0) {
+    PRInt32 count = mSubtreeModifiedTargets.Count();
+    if (!count) {
+      return;
+    }
+
+    nsCOMPtr<nsPIDOMWindow> window;
+    window = do_QueryInterface(GetScriptGlobalObject());
+    if (window &&
+        !window->HasMutationListeners(NS_EVENT_BITS_MUTATION_SUBTREEMODIFIED)) {
+      mSubtreeModifiedTargets.Clear();
+      return;
+    }
+
+    nsCOMArray<nsINode> realTargets;
+    for (PRInt32 i = 0; i < count; ++i) {
+      nsINode* possibleTarget = mSubtreeModifiedTargets[i];
+      nsCOMPtr<nsIContent> content = do_QueryInterface(possibleTarget);
+      if (content && content->IsAnonymousForEvents()) {
+        if (realTargets.IndexOf(possibleTarget) == -1) {
+          realTargets.AppendObject(possibleTarget);
+        }
+        continue;
+      }
+
+      nsINode* commonAncestor = nsnull;
+      PRInt32 realTargetCount = realTargets.Count();
+      for (PRInt32 j = 0; j < realTargetCount; ++j) {
+        commonAncestor =
+          nsContentUtils::GetCommonAncestor(possibleTarget, realTargets[j]);
+        if (commonAncestor) {
+          realTargets.ReplaceObjectAt(commonAncestor, j);
+          break;
+        }
+      }
+      if (!commonAncestor) {
+        realTargets.AppendObject(possibleTarget);
+      }
+    }
+
+    mSubtreeModifiedTargets.Clear();
+
+    PRInt32 realTargetCount = realTargets.Count();
+    for (PRInt32 k = 0; k < realTargetCount; ++k) {
+      nsMutationEvent mutation(PR_TRUE, NS_MUTATION_SUBTREEMODIFIED);
+      nsEventDispatcher::Dispatch(realTargets[k], nsnull, &mutation);
+    }
+  }
 }
 
 static PRUint32 GetURIHash(nsIURI* aURI)

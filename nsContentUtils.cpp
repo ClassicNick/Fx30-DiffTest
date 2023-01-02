@@ -107,7 +107,6 @@
 #include "nsCRT.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMEventTarget.h"
-#include "nsIDOMEventReceiver.h"
 #include "nsIPrivateDOMEvent.h"
 #include "nsIDOMDocumentEvent.h"
 #ifdef MOZ_XTF
@@ -134,6 +133,10 @@ static NS_DEFINE_CID(kXTFServiceCID, NS_XTFSERVICE_CID);
 #include "nsIFragmentContentSink.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsTPtrArray.h"
+#include "nsGUIEvent.h"
+#include "nsMutationEvent.h"
+#include "nsIKBStateControl.h"
+#include "nsIMEStateManager.h"
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
@@ -165,6 +168,7 @@ nsIPrefBranch *nsContentUtils::sPrefBranch = nsnull;
 nsIPref *nsContentUtils::sPref = nsnull;
 imgILoader *nsContentUtils::sImgLoader;
 nsIConsoleService *nsContentUtils::sConsoleService;
+nsDataHashtable<nsISupportsHashKey, EventNameMapping>* nsContentUtils::sEventTable = nsnull;
 nsIStringBundleService *nsContentUtils::sStringBundleService;
 nsIStringBundle *nsContentUtils::sStringBundles[PropertiesFile_COUNT];
 nsIContentPolicy *nsContentUtils::sContentPolicyService;
@@ -279,12 +283,14 @@ nsContentUtils::Init()
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
+  if (!InitializeEventTable())
+    return NS_ERROR_FAILURE;
+
   if (!sEventListenerManagersHash.ops) {
     static PLDHashTableOps hash_table_ops =
     {
       PL_DHashAllocTable,
       PL_DHashFreeTable,
-      PL_DHashGetKeyStub,
       PL_DHashVoidPtrKeyStub,
       PL_DHashMatchEntryStub,
       PL_DHashMoveEntryStub,
@@ -304,6 +310,117 @@ nsContentUtils::Init()
   sInitialized = PR_TRUE;
 
   return NS_OK;
+}
+
+PRBool
+nsContentUtils::InitializeEventTable() {
+  NS_ASSERTION(!sEventTable, "EventTable already initialized!");
+
+  struct EventItem
+  {
+    nsIAtom** mAtom;
+    EventNameMapping mValue;
+  };
+
+  static const EventItem eventArray[] = {
+    { &nsGkAtoms::onmousedown,                   { NS_MOUSE_BUTTON_DOWN, EventNameType_All }},
+    { &nsGkAtoms::onmouseup,                     { NS_MOUSE_BUTTON_UP, EventNameType_All }},
+    { &nsGkAtoms::onclick,                       { NS_MOUSE_CLICK, EventNameType_All }},
+    { &nsGkAtoms::ondblclick,                    { NS_MOUSE_DOUBLECLICK, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onmouseover,                   { NS_MOUSE_ENTER_SYNTH, EventNameType_All }},
+    { &nsGkAtoms::onmouseout,                    { NS_MOUSE_EXIT_SYNTH, EventNameType_All }},
+    { &nsGkAtoms::onmousemove,                   { NS_MOUSE_MOVE, EventNameType_All }},
+    { &nsGkAtoms::oncontextmenu,                 { NS_CONTEXTMENU, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onkeydown,                     { NS_KEY_DOWN, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onkeyup,                       { NS_KEY_UP, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onkeypress,                    { NS_KEY_PRESS, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onfocus,                       { NS_FOCUS_CONTENT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onblur,                        { NS_BLUR_CONTENT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onoffline,                     { NS_EVENT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::ononline,                      { NS_EVENT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onsubmit,                      { NS_FORM_SUBMIT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onreset,                       { NS_FORM_RESET, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onchange,                      { NS_FORM_CHANGE, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onselect,                      { NS_FORM_SELECTED, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onload,                        { NS_LOAD, EventNameType_All }},
+    { &nsGkAtoms::onunload,                      { NS_PAGE_UNLOAD,
+                                                 (EventNameType_HTMLXUL | EventNameType_SVGSVG) }},
+    { &nsGkAtoms::onbeforeunload,                { NS_BEFORE_PAGE_UNLOAD, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onabort,                       { NS_IMAGE_ABORT,
+                                                 (EventNameType_HTMLXUL | EventNameType_SVGSVG) }},
+    { &nsGkAtoms::onerror,                       { NS_LOAD_ERROR,
+                                                 (EventNameType_HTMLXUL | EventNameType_SVGSVG) }},
+    { &nsGkAtoms::onDOMAttrModified,             { NS_MUTATION_ATTRMODIFIED, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMCharacterDataModified,    { NS_MUTATION_CHARACTERDATAMODIFIED, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMNodeInserted,             { NS_MUTATION_NODEINSERTED, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMNodeRemoved,              { NS_MUTATION_NODEREMOVED, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMNodeInsertedIntoDocument, { NS_MUTATION_NODEINSERTEDINTODOCUMENT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMNodeRemovedFromDocument,  { NS_MUTATION_NODEREMOVEDFROMDOCUMENT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMSubtreeModified,          { NS_MUTATION_SUBTREEMODIFIED, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMActivate,                 { NS_UI_ACTIVATE, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMFocusIn,                  { NS_UI_FOCUSIN, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMFocusOut,                 { NS_UI_FOCUSOUT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onDOMMouseScroll,              { NS_MOUSE_SCROLL, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::oninput,                       { NS_FORM_INPUT, EventNameType_HTMLXUL }},
+    { &nsGkAtoms::onpageshow,                    { NS_PAGE_SHOW, EventNameType_HTML }},
+    { &nsGkAtoms::onpagehide,                    { NS_PAGE_HIDE, EventNameType_HTML }},
+    { &nsGkAtoms::onresize,                      { NS_RESIZE_EVENT,
+                                                 (EventNameType_HTMLXUL | EventNameType_SVGSVG) }},
+    { &nsGkAtoms::onscroll,                      { NS_SCROLL_EVENT,
+                                                 (EventNameType_HTMLXUL | EventNameType_SVGSVG) }},
+    // XUL specific events
+    { &nsGkAtoms::ontext,                        { NS_TEXT_TEXT, EventNameType_XUL }},
+    { &nsGkAtoms::oncompositionstart,            { NS_COMPOSITION_START, EventNameType_XUL }},
+    { &nsGkAtoms::oncompositionend,              { NS_COMPOSITION_END, EventNameType_XUL }},
+    { &nsGkAtoms::onclose,                       { NS_XUL_CLOSE, EventNameType_XUL }},
+    { &nsGkAtoms::onpopupshowing,                { NS_XUL_POPUP_SHOWING, EventNameType_XUL }},
+    { &nsGkAtoms::onpopupshown,                  { NS_XUL_POPUP_SHOWN, EventNameType_XUL }},
+    { &nsGkAtoms::onpopuphiding,                 { NS_XUL_POPUP_HIDING, EventNameType_XUL }},
+    { &nsGkAtoms::onpopuphidden,                 { NS_XUL_POPUP_HIDDEN, EventNameType_XUL }},
+    { &nsGkAtoms::oncommand,                     { NS_XUL_COMMAND, EventNameType_XUL }},
+    { &nsGkAtoms::onbroadcast,                   { NS_XUL_BROADCAST, EventNameType_XUL }},
+    { &nsGkAtoms::oncommandupdate,               { NS_XUL_COMMAND_UPDATE, EventNameType_XUL }},
+    { &nsGkAtoms::ondragenter,                   { NS_DRAGDROP_ENTER, EventNameType_XUL }},
+    { &nsGkAtoms::ondragover,                    { NS_DRAGDROP_OVER_SYNTH, EventNameType_XUL }},
+    { &nsGkAtoms::ondragexit,                    { NS_DRAGDROP_EXIT_SYNTH, EventNameType_XUL }},
+    { &nsGkAtoms::ondragdrop,                    { NS_DRAGDROP_DRAGDROP, EventNameType_XUL }},
+    { &nsGkAtoms::ondraggesture,                 { NS_DRAGDROP_GESTURE, EventNameType_XUL }},
+    { &nsGkAtoms::ondrag,                        { NS_DRAGDROP_DRAG, EventNameType_XUL }},
+    { &nsGkAtoms::ondragend,                     { NS_DRAGDROP_END, EventNameType_XUL }},
+    { &nsGkAtoms::ondragstart,                   { NS_DRAGDROP_START, EventNameType_XUL }},
+    { &nsGkAtoms::ondragleave,                   { NS_DRAGDROP_LEAVE_SYNTH, EventNameType_XUL }},
+    { &nsGkAtoms::ondrop,                        { NS_DRAGDROP_DROP, EventNameType_XUL }},
+    { &nsGkAtoms::onoverflow,                    { NS_SCROLLPORT_OVERFLOW, EventNameType_XUL }},
+    { &nsGkAtoms::onunderflow,                   { NS_SCROLLPORT_UNDERFLOW, EventNameType_XUL }}
+#ifdef MOZ_SVG
+   ,{ &nsGkAtoms::onSVGLoad,                     { NS_SVG_LOAD, EventNameType_None }},
+    { &nsGkAtoms::onSVGUnload,                   { NS_SVG_UNLOAD, EventNameType_None }},
+    { &nsGkAtoms::onSVGAbort,                    { NS_SVG_ABORT, EventNameType_None }},
+    { &nsGkAtoms::onSVGError,                    { NS_SVG_ERROR, EventNameType_None }},
+    { &nsGkAtoms::onSVGResize,                   { NS_SVG_RESIZE, EventNameType_None }},
+    { &nsGkAtoms::onSVGScroll,                   { NS_SVG_SCROLL, EventNameType_None }},
+    { &nsGkAtoms::onSVGZoom,                     { NS_SVG_ZOOM, EventNameType_None }},
+    { &nsGkAtoms::onzoom,                        { NS_SVG_ZOOM, EventNameType_SVGSVG }}
+#endif // MOZ_SVG
+  };
+
+  sEventTable = new nsDataHashtable<nsISupportsHashKey, EventNameMapping>;
+  if (!sEventTable ||
+      !sEventTable->Init(int(NS_ARRAY_LENGTH(eventArray) / 0.75) + 1)) {
+    delete sEventTable;
+    sEventTable = nsnull;
+    return PR_FALSE;
+  }
+
+  for (PRUint32 i = 0; i < NS_ARRAY_LENGTH(eventArray); ++i) {
+    if (!sEventTable->Put(*(eventArray[i].mAtom), eventArray[i].mValue)) {
+      delete sEventTable;
+      sEventTable = nsnull;
+      return PR_FALSE;
+    }
+  }
+
+  return PR_TRUE;
 }
 
 /**
@@ -558,6 +675,10 @@ nsContentUtils::Shutdown()
 #ifdef IBMBIDI
   NS_IF_RELEASE(sBidiKeyboard);
 #endif
+
+  delete sEventTable;
+  sEventTable = nsnull;
+
   if (sPtrsToPtrsToRelease) {
     for (i = 0; i < sPtrsToPtrsToRelease->Count(); ++i) {
       nsISupports** ptrToPtr =
@@ -2573,6 +2694,30 @@ nsContentUtils::RemoveJSGCRoot(void* aPtr)
 }
 
 // static
+PRBool
+nsContentUtils::IsEventAttributeName(nsIAtom* aName, PRInt32 aType)
+{
+  const char* name;
+  aName->GetUTF8String(&name);
+  if (name[0] != 'o' || name[1] != 'n')
+    return PR_FALSE;
+
+  EventNameMapping mapping;
+  return (sEventTable->Get(aName, &mapping) && mapping.mType & aType);
+}
+
+// static
+PRUint32
+nsContentUtils::GetEventId(nsIAtom* aName)
+{
+  EventNameMapping mapping;
+  if (sEventTable->Get(aName, &mapping))
+    return mapping.mId;
+
+  return NS_USER_DEFINED_EVENT;
+}
+
+// static
 nsresult
 nsContentUtils::DispatchTrustedEvent(nsIDocument* aDoc, nsISupports* aTarget,
                                      const nsAString& aEventName,
@@ -2820,6 +2965,12 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
     return PR_FALSE;
   }
 
+  // To batch DOMSubtreeModified properly, all mutation events should be
+  // processed if one is being processed already.
+  if (doc->MutationEventBeingDispatched()) {
+    return PR_TRUE;
+  }
+
   // global object will be null for documents that don't have windows.
   nsCOMPtr<nsPIDOMWindow> window;
   window = do_QueryInterface(doc->GetScriptGlobalObject());
@@ -2828,10 +2979,10 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
   }
 
   // If we have a window, we can check it for mutation listeners now.
-  nsCOMPtr<nsIDOMEventReceiver> rec(do_QueryInterface(window));
-  if (rec) {
+  nsCOMPtr<nsPIDOMEventTarget> piTarget(do_QueryInterface(window));
+  if (piTarget) {
     nsCOMPtr<nsIEventListenerManager> manager;
-    rec->GetListenerManager(PR_FALSE, getter_AddRefs(manager));
+    piTarget->GetListenerManager(PR_FALSE, getter_AddRefs(manager));
     if (manager) {
       PRBool hasListeners = PR_FALSE;
       manager->HasMutationListeners(&hasListeners);
@@ -2993,52 +3144,6 @@ nsContentUtils::IsValidNodeName(nsIAtom *aLocalName, nsIAtom *aPrefix,
   // If the namespace is not the XML namespace then the prefix must not be xml.
   return aPrefix != nsGkAtoms::xmlns &&
          (aNamespaceID == kNameSpaceID_XML || aPrefix != nsGkAtoms::xml);
-}
-
-/* static */
-nsresult
-nsContentUtils::SetUserData(nsINode *aNode, nsIAtom *aKey,
-                            nsIVariant *aData, nsIDOMUserDataHandler *aHandler,
-                            nsIVariant **aResult)
-{
-  *aResult = nsnull;
-
-  nsresult rv;
-  void *data;
-  if (aData) {
-    rv = aNode->SetProperty(DOM_USER_DATA, aKey, aData,
-                            nsPropertyTable::SupportsDtorFunc, PR_TRUE,
-                            &data);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    NS_ADDREF(aData);
-  }
-  else {
-    data = aNode->UnsetProperty(DOM_USER_DATA, aKey);
-  }
-
-  // Take over ownership of the old data from the property table.
-  nsCOMPtr<nsIVariant> oldData = dont_AddRef(NS_STATIC_CAST(nsIVariant*, data));
-
-  if (aData && aHandler) {
-    rv = aNode->SetProperty(DOM_USER_DATA_HANDLER, aKey, aHandler,
-                            nsPropertyTable::SupportsDtorFunc, PR_TRUE);
-    if (NS_FAILED(rv)) {
-      // We failed to set the handler, remove the data.
-      aNode->DeleteProperty(DOM_USER_DATA, aKey);
-
-      return rv;
-    }
-
-    NS_ADDREF(aHandler);
-  }
-  else {
-    aNode->DeleteProperty(DOM_USER_DATA_HANDLER, aKey);
-  }
-
-  oldData.swap(*aResult);
-
-  return NS_OK;
 }
 
 /* static */
@@ -3422,4 +3527,28 @@ nsContentUtils::DropScriptObject(PRUint32 aLangID, void *aObject)
     NS_RELEASE(sScriptRuntimes[langIndex]);
   }
   return rv;
+}
+
+/* static */
+PRUint32
+nsContentUtils::GetKBStateControlStatusFromIMEStatus(PRUint32 aState)
+{
+  switch (aState & nsIContent::IME_STATUS_MASK_ENABLED) {
+    case nsIContent::IME_STATUS_DISABLE:
+      return nsIKBStateControl::IME_STATUS_DISABLED;
+    case nsIContent::IME_STATUS_ENABLE:
+      return nsIKBStateControl::IME_STATUS_ENABLED;
+    case nsIContent::IME_STATUS_PASSWORD:
+      return nsIKBStateControl::IME_STATUS_PASSWORD;
+    default:
+      NS_ERROR("The given state doesn't have valid enable state");
+      return nsIKBStateControl::IME_STATUS_ENABLED;
+  }
+}
+
+/* static */
+void
+nsContentUtils::NotifyInstalledMenuKeyboardListener(PRBool aInstalling)
+{
+  nsIMEStateManager::OnInstalledMenuKeyboardListener(aInstalling);
 }

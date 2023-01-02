@@ -902,10 +902,34 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
     rv = mSelection->GetRangeCount(&count);
     NS_ENSURE_SUCCESS(rv, rv);
 
+    nsCOMPtr<nsIDOMNode> node, prevNode;
     for (i = 0; i < count; i++) {
       mSelection->GetRangeAt(i, getter_AddRefs(range));
 
+      // Bug 236546: newlines not added when copying table cells into clipboard
+      // Each selected cell shows up as a range containing a row with a single cell
+      // get the row, compare it to previous row and emit </tr><tr> as needed
+      range->GetStartContainer(getter_AddRefs(node));
+      NS_ENSURE_TRUE(node, NS_ERROR_FAILURE);
+      if (node != prevNode) {
+        if (prevNode) {
+          rv = SerializeNodeEnd(prevNode, aOutputString);
+          NS_ENSURE_SUCCESS(rv, rv);
+          prevNode = nsnull;
+        }
+        nsCOMPtr<nsIContent> content = do_QueryInterface(node);
+        if (content && content->Tag() == nsGkAtoms::tr) {
+          rv = SerializeNodeStart(node, 0, -1, aOutputString);
+          NS_ENSURE_SUCCESS(rv, rv);
+          prevNode = node;
+        }
+      }
+
       rv = SerializeRangeToString(range, aOutputString);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    if (prevNode) {
+      rv = SerializeNodeEnd(prevNode, aOutputString);
       NS_ENSURE_SUCCESS(rv, rv);
     }
 

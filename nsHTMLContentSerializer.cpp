@@ -472,7 +472,10 @@ nsHTMLContentSerializer::IsJavaScript(nsIAtom* aAttrNameAtom, const nsAString& a
               || (aAttrNameAtom == nsGkAtoms::oncommand)   || (aAttrNameAtom == nsGkAtoms::oncommandupdate)
               || (aAttrNameAtom == nsGkAtoms::ondragdrop)  || (aAttrNameAtom == nsGkAtoms::ondragenter)
               || (aAttrNameAtom == nsGkAtoms::ondragexit)  || (aAttrNameAtom == nsGkAtoms::ondraggesture)
-              || (aAttrNameAtom == nsGkAtoms::ondragover)  || (aAttrNameAtom == nsGkAtoms::oninput);
+              || (aAttrNameAtom == nsGkAtoms::ondragover)  || (aAttrNameAtom == nsGkAtoms::ondragstart)
+              || (aAttrNameAtom == nsGkAtoms::ondragleave) || (aAttrNameAtom == nsGkAtoms::ondrop)
+              || (aAttrNameAtom == nsGkAtoms::ondragend)   || (aAttrNameAtom == nsGkAtoms::ondrag)
+              || (aAttrNameAtom == nsGkAtoms::oninput);
   return result;
 }
 
@@ -651,6 +654,16 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
 
   nsIAtom *name = content->Tag();
 
+  if (name == nsGkAtoms::meta) {
+    // We need too skip any meta tags that set the content type
+    // becase we set our own later.
+    nsAutoString header;
+    content->GetAttr(kNameSpaceID_None, nsGkAtoms::httpEquiv, header);
+    if (header.LowerCaseEqualsLiteral("content-type")) {
+      return NS_OK;
+    }
+  }
+
   if (name == nsGkAtoms::br && mPreLevel > 0
       && (mFlags & nsIDocumentEncoder::OutputNoFormattingInPre)) {
     AppendToString(mLineBreak, aStr);
@@ -744,6 +757,18 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
       name == nsGkAtoms::noframes) {
     mInCDATA = PR_TRUE;
   }
+
+  if (name == nsGkAtoms::head) {
+    // We should also obey the line break rules set for a normal meta tag here.
+    // We add a line break before and after the tag's opening.
+    AppendToString(mLineBreak, aStr);
+    AppendToString(NS_LITERAL_STRING("<meta http-equiv=\"content-type\""),
+                   aStr);
+    AppendToString(NS_LITERAL_STRING(" content=\"text/html; "), aStr);
+    AppendToString(NS_ConvertASCIItoUTF16(mCharset), aStr);
+    AppendToString(NS_LITERAL_STRING("\">"), aStr);
+    AppendToString(mLineBreak, aStr);
+  }  
 
   return NS_OK;
 }
