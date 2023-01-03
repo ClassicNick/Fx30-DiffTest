@@ -123,9 +123,9 @@ nsTextBoxFrame::AttributeChanged(PRInt32         aNameSpaceID,
     UpdateAttributes(aAttribute, aResize, aRedraw);
 
     if (aResize) {
-        AddStateBits(NS_FRAME_IS_DIRTY);
         GetPresContext()->PresShell()->
-          FrameNeedsReflow(this, nsIPresShell::eStyleChange);
+            FrameNeedsReflow(this, nsIPresShell::eStyleChange,
+                             NS_FRAME_IS_DIRTY);
     } else if (aRedraw) {
         nsBoxLayoutState state(GetPresContext());
         Redraw(state);

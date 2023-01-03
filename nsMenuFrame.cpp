@@ -884,7 +884,7 @@ nsMenuFrame::OpenMenuInternal(PRBool aActivateFlag)
       {
          menuPopup->AddStateBits(NS_FRAME_IS_DIRTY);
          presContext->PresShell()->
-           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange);
+           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange, nsnull);
          presContext->PresShell()->FlushPendingNotifications(Flush_OnlyReflow);
       }
 
@@ -905,7 +905,7 @@ nsMenuFrame::OpenMenuInternal(PRBool aActivateFlag)
       {
          menuPopup->AddStateBits(NS_FRAME_IS_DIRTY);
          presContext->PresShell()->
-           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange);
+           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange, nsnull);
          presContext->PresShell()->FlushPendingNotifications(Flush_OnlyReflow);
       }
 
@@ -1881,7 +1881,7 @@ nsMenuFrame::RemoveFrame(nsIAtom*        aListName,
     mPopupFrames.DestroyFrame(aOldFrame);
     AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
     GetPresContext()->PresShell()->
-      FrameNeedsReflow(this, nsIPresShell::eTreeChange);
+      FrameNeedsReflow(this, nsIPresShell::eTreeChange, nsnull);
     rv = NS_OK;
   } else {
     rv = nsBoxFrame::RemoveFrame(aListName, aOldFrame);
@@ -1908,7 +1908,7 @@ nsMenuFrame::InsertFrames(nsIAtom*        aListName,
 #endif
     AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
     GetPresContext()->PresShell()->
-      FrameNeedsReflow(this, nsIPresShell::eTreeChange);
+      FrameNeedsReflow(this, nsIPresShell::eTreeChange, nsnull);
     rv = NS_OK;
   } else {
     rv = nsBoxFrame::InsertFrames(aListName, aPrevFrame, aFrameList);  
@@ -1937,7 +1937,7 @@ nsMenuFrame::AppendFrames(nsIAtom*        aListName,
 #endif
     AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
     GetPresContext()->PresShell()->
-      FrameNeedsReflow(this, nsIPresShell::eTreeChange);
+      FrameNeedsReflow(this, nsIPresShell::eTreeChange, nsnull);
     rv = NS_OK;
   } else {
     rv = nsBoxFrame::AppendFrames(aListName, aFrameList); 

@@ -42,7 +42,7 @@
 #include "nsIDOMMouseListener.h"
 #include "nsIRollupListener.h"
 #include "nsIMenuRollup.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsCOMPtr.h"
 
 class nsIMenuParent;
@@ -62,13 +62,13 @@ class nsMenuDismissalListener : public nsIDOMMouseListener,
 public:
   friend class nsMenuPopupFrame;
 
-  NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent) { return NS_OK; };
-  NS_IMETHOD MouseDown(nsIDOMEvent* aMouseEvent) { return NS_OK; };
-  NS_IMETHOD MouseUp(nsIDOMEvent* aMouseEvent) { return NS_OK; };
-  NS_IMETHOD MouseClick(nsIDOMEvent* aMouseEvent) { return NS_OK; };
-  NS_IMETHOD MouseDblClick(nsIDOMEvent* aMouseEvent) { return NS_OK; };
-  NS_IMETHOD MouseOver(nsIDOMEvent* aMouseEvent) { return NS_OK; };
-  NS_IMETHOD MouseOut(nsIDOMEvent* aMouseEvent) { return NS_OK; };
+  NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent) { return NS_OK; }
+  NS_IMETHOD MouseDown(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+  NS_IMETHOD MouseUp(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+  NS_IMETHOD MouseClick(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+  NS_IMETHOD MouseDblClick(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+  NS_IMETHOD MouseOver(nsIDOMEvent* aMouseEvent) { return NS_OK; }
+  NS_IMETHOD MouseOut(nsIDOMEvent* aMouseEvent) { return NS_OK; }
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIROLLUPLISTENER

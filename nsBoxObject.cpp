@@ -157,7 +157,7 @@ nsBoxObject::GetPresShell(PRBool aFlushLayout)
     doc->FlushPendingNotifications(Flush_Layout);
   }
 
-  return doc->GetShellAt(0);
+  return doc->GetPrimaryShell();
 }
 
 nsresult 
@@ -224,7 +224,7 @@ nsBoxObject::GetOffsetRect(nsRect& aRect)
       aRect.y = NSTwipsToIntPixels(origin.y, scale);
       aRect.width = NSTwipsToIntPixels(rcFrame.width, scale);
       aRect.height = NSTwipsToIntPixels(rcFrame.height, scale);
-	}
+    }
   }
  
   return NS_OK;

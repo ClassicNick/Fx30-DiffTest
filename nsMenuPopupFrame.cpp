@@ -44,6 +44,7 @@
 #include "nsMenuPopupFrame.h"
 #include "nsGkAtoms.h"
 #include "nsIContent.h"
+#include "nsContentUtils.h"
 #include "prtypes.h"
 #include "nsIAtom.h"
 #include "nsPresContext.h"
@@ -142,7 +143,8 @@ nsMenuPopupFrame::nsMenuPopupFrame(nsIPresShell* aShell, nsStyleContext* aContex
   mMenuCanOverlapOSBar(PR_FALSE),
   mShouldAutoPosition(PR_TRUE),
   mShouldRollup(PR_TRUE),
-  mConsumeRollupEvent(nsIPopupBoxObject::ROLLUP_DEFAULT)
+  mConsumeRollupEvent(nsIPopupBoxObject::ROLLUP_DEFAULT),
+  mInContentShell(PR_TRUE)
 {
   SetIsContextMenu(PR_FALSE);   // we're not a context menu by default
 } // ctor
@@ -154,6 +156,7 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
                        nsIFrame*        aPrevInFlow)
 {
   nsresult rv = nsBoxFrame::Init(aContent, aParent, aPrevInFlow);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Set up a mediator which can be used for callbacks on this frame.
   mTimerMediator = new nsMenuPopupTimerMediator(this);
@@ -169,7 +172,8 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
     GetMetric(nsILookAndFeel::eMetric_MenusCanOverlapOSBar, tempBool);
   mMenuCanOverlapOSBar = tempBool;
 
-  CreateViewForFrame(presContext, this, GetStyleContext(), PR_TRUE);
+  rv = CreateViewForFrame(presContext, this, GetStyleContext(), PR_TRUE);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Now that we've made a view, remove it and insert it at the correct
   // position in the view hierarchy (as the root view).  We do this so that we
@@ -191,6 +195,13 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
   // about that constraint.
   viewManager->SetViewFloating(ourView, PR_TRUE);
 
+  nsCOMPtr<nsISupports> cont = GetPresContext()->GetContainer();
+  nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
+  PRInt32 type = -1;
+  if (dsti && NS_SUCCEEDED(dsti->GetItemType(&type)) &&
+      type == nsIDocShellTreeItem::typeChrome)
+    mInContentShell = PR_FALSE;
+
   // XXX make sure we are hidden (shouldn't this be done automatically?)
   viewManager->SetViewVisibility(ourView, nsViewVisibility_kHide);
   if (!ourView->HasWidget()) {
@@ -211,22 +222,8 @@ nsMenuPopupFrame::CreateWidgetForView(nsIView* aView)
   widgetData.mBorderStyle = eBorderStyle_default;
   widgetData.clipSiblings = PR_TRUE;
 
-  PRBool isCanvas;
-  const nsStyleBackground* bg;
-  PRBool hasBG =
-    nsCSSRendering::FindBackground(GetPresContext(), this, &bg, &isCanvas);
-  PRBool viewHasTransparentContent = hasBG &&
-    (bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) &&
-    !GetStyleDisplay()->mAppearance;
-  if (viewHasTransparentContent) {
-    nsCOMPtr<nsISupports> cont = GetPresContext()->GetContainer();
-    nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
-    PRInt32 type = -1;
-    if (!dsti || NS_FAILED(dsti->GetItemType(&type)) ||
-        type != nsIDocShellTreeItem::typeChrome)
-      viewHasTransparentContent = PR_FALSE;
-  }
-
+  PRBool viewHasTransparentContent = !mInContentShell &&
+                                     nsLayoutUtils::FrameHasTransparency(this);
   nsIContent* parentContent = GetContent()->GetParent();
   nsIAtom *tag = nsnull;
   if (parentContent)
@@ -378,7 +375,7 @@ nsMenuPopupFrame::AdjustClientXYForNestedDocuments ( nsIDOMXULDocument* inPopupD
   if ( targetAsContent ) {
     nsCOMPtr<nsIDocument> targetDocument = targetAsContent->GetDocument();
     if (targetDocument) {
-      nsIPresShell *shell = targetDocument->GetShellAt(0);
+      nsIPresShell *shell = targetDocument->GetPrimaryShell();
       if ( shell ) {
         // We might be inside a popup widget. If so, we need to use that widget and
         // not the root view's widget.
@@ -618,7 +615,7 @@ nsMenuPopupFrame::MovePopupToOtherSideOfParent ( PRBool inFlushAboveBelow, PRInt
 
 } // MovePopupToOtherSideOfParent
 
-class nsASyncMenuActivation : public nsRunnable
+class nsASyncMenuActivation : public nsIReflowCallback
 {
 public:
   nsASyncMenuActivation(nsIContent* aContent)
@@ -626,7 +623,8 @@ public:
   {
   }
 
-  NS_IMETHOD Run() {
+  virtual PRBool ReflowFinished() {
+    PRBool shouldFlush = PR_FALSE;
     if (mContent &&
         !mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::menuactive,
                                nsGkAtoms::_true, eCaseMatters) &&
@@ -634,8 +632,11 @@ public:
                               nsGkAtoms::_true, eCaseMatters)) {
       mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::menuactive,
                         NS_LITERAL_STRING("true"), PR_TRUE);
+      shouldFlush = PR_TRUE;
     }
-    return NS_OK;
+
+    delete this;
+    return shouldFlush;
   }
 
   nsCOMPtr<nsIContent> mContent;
@@ -651,7 +652,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
   NS_ENSURE_ARG(aPresContext);
   NS_ENSURE_ARG(aFrame);
 
-  if (!mShouldAutoPosition) 
+  if (!mShouldAutoPosition && !mInContentShell) 
     return NS_OK;
 
   // |containingView|
@@ -679,7 +680,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
   // |parentRect|
   //   The dimensions of the frame invoking the popup. 
   nsRect parentRect = aFrame->GetRect();
-
+  
   float p2t = aPresContext->ScaledPixelsToTwips();
 
   nsIViewManager* viewManager = containingView->GetViewManager();
@@ -727,7 +728,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
 
     // Add in the top and left margins
     GetStyleMargin()->GetMargin(margin);
-    
+
     xpos += margin.left;
     ypos += margin.top;
   } 
@@ -749,7 +750,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
   if (!window)
     return NS_OK;
 
-  nsCOMPtr<nsIDOMScreen> screen;
+	nsCOMPtr<nsIDOMScreen> screen;
   window->GetScreen(getter_AddRefs(screen));
   PRInt32 screenWidth = 0, screenHeight = 0;
   PRInt32 screenLeft = 0, screenTop = 0;
@@ -1022,9 +1023,9 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
                              nsGkAtoms::_true, eCaseMatters) &&
       mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::menutobedisplayed,
                             nsGkAtoms::_true, eCaseMatters)) {
-    nsCOMPtr<nsIRunnable> ev =
-      new nsASyncMenuActivation(mContent);
-    NS_DispatchToCurrentThread(ev);
+    nsIReflowCallback* cb = new nsASyncMenuActivation(mContent);
+    NS_ENSURE_TRUE(cb, NS_ERROR_OUT_OF_MEMORY);
+    GetPresContext()->PresShell()->PostReflowCallback(cb);
   }
 
   return NS_OK;
@@ -1801,7 +1802,7 @@ nsMenuPopupFrame::InstallKeyboardNavigator()
   if (mKeyboardNavigator)
     return NS_OK;
 
-  nsCOMPtr<nsIDOMEventReceiver> target = do_QueryInterface(mContent->GetDocument());
+  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mContent->GetDocument());
   
   mTarget = target;
   mKeyboardNavigator = new nsMenuListener(this);
@@ -1810,7 +1811,9 @@ nsMenuPopupFrame::InstallKeyboardNavigator()
   target->AddEventListener(NS_LITERAL_STRING("keypress"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE); 
   target->AddEventListener(NS_LITERAL_STRING("keydown"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);  
   target->AddEventListener(NS_LITERAL_STRING("keyup"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);   
-  
+
+  nsContentUtils::NotifyInstalledMenuKeyboardListener(PR_TRUE);
+
   return NS_OK;
 }
 
@@ -1823,8 +1826,10 @@ nsMenuPopupFrame::RemoveKeyboardNavigator()
   mTarget->RemoveEventListener(NS_LITERAL_STRING("keypress"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);
   mTarget->RemoveEventListener(NS_LITERAL_STRING("keydown"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);
   mTarget->RemoveEventListener(NS_LITERAL_STRING("keyup"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);
-  
+
   NS_IF_RELEASE(mKeyboardNavigator);
+
+  nsContentUtils::NotifyInstalledMenuKeyboardListener(PR_FALSE);
 
   return NS_OK;
 }
@@ -2045,6 +2050,10 @@ nsMenuPopupFrame::MoveTo(PRInt32 aLeft, PRInt32 aTop)
 void
 nsMenuPopupFrame::MoveToInternal(PRInt32 aLeft, PRInt32 aTop)
 {
+  // just don't support moving popups for content shells
+  if (mInContentShell)
+    return;
+
   nsIView* view = GetView();
   NS_ASSERTION(view->GetParent(), "Must have parent!");
   

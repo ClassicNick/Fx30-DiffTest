@@ -183,7 +183,8 @@ nsStackLayout::AddOffset(nsBoxLayoutState& aState, nsIBox* aChild, nsSize& aSize
   
   // As an optimization, we cache the fact that we are not positioned to avoid
   // wasting time fetching attributes and checking style data.
-  if (aChild->GetStateBits() & NS_STATE_STACK_NOT_POSITIONED)
+  if (aChild->IsBoxFrame() &&
+      (aChild->GetStateBits() & NS_STATE_STACK_NOT_POSITIONED))
     return PR_FALSE;
   
   PRBool offsetSpecified = PR_FALSE;
@@ -212,7 +213,7 @@ nsStackLayout::AddOffset(nsBoxLayoutState& aState, nsIBox* aChild, nsSize& aSize
     content->GetAttr(kNameSpaceID_None, nsGkAtoms::left, value);
     if (!value.IsEmpty()) {
       value.Trim("%");
-        offset.width = NSIntPixelsToTwips(value.ToInteger(&error),
+      offset.width = NSIntPixelsToTwips(value.ToInteger(&error),
                                         presContext->ScaledPixelsToTwips());
       offsetSpecified = PR_TRUE;
     }
@@ -220,7 +221,7 @@ nsStackLayout::AddOffset(nsBoxLayoutState& aState, nsIBox* aChild, nsSize& aSize
     content->GetAttr(kNameSpaceID_None, nsGkAtoms::top, value);
     if (!value.IsEmpty()) {
       value.Trim("%");
-        offset.height = NSIntPixelsToTwips(value.ToInteger(&error),
+      offset.height = NSIntPixelsToTwips(value.ToInteger(&error),
                                          presContext->ScaledPixelsToTwips());
       offsetSpecified = PR_TRUE;
     }
@@ -228,7 +229,7 @@ nsStackLayout::AddOffset(nsBoxLayoutState& aState, nsIBox* aChild, nsSize& aSize
 
   aSize += offset;
 
-  if (!offsetSpecified) {
+  if (!offsetSpecified && aChild->IsBoxFrame()) {
     // If no offset was specified at all, then we cache this fact to avoid requerying
     // CSS or the content model.
     aChild->AddStateBits(NS_STATE_STACK_NOT_POSITIONED);
@@ -267,7 +268,7 @@ nsStackLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
       PRBool sizeChanged = (oldRect != childRect);
 
       // only lay out dirty children or children whose sizes have changed
-      if (sizeChanged || (child->GetStateBits() & (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN))) {
+      if (sizeChanged || NS_SUBTREE_DIRTY(child)) {
           // add in the child's margin
           nsMargin margin;
           child->GetMargin(margin);

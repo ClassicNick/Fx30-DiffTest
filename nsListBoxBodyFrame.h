@@ -137,7 +137,7 @@ protected:
 
   // row height
   PRInt32 mRowCount;
-  nscoord mRowHeight;
+  PRInt32 mRowHeight;
   PRPackedBool mRowHeightWasSet;
   nscoord mAvailableHeight;
   nscoord mStringWidth;

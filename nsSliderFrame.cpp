@@ -54,17 +54,15 @@
 #include "nsHTMLParts.h"
 #include "nsIPresShell.h"
 #include "nsCSSRendering.h"
-#include "nsIDOMEventReceiver.h"
+#include "nsIDOMEventTarget.h"
 #include "nsIViewManager.h"
-#include "nsIWidget.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIDocument.h"
 #include "nsScrollbarButtonFrame.h"
 #include "nsIScrollbarListener.h"
 #include "nsIScrollbarMediator.h"
 #include "nsIScrollbarFrame.h"
-#include "nsISupportsArray.h"
-#include "nsIScrollableView.h"
+#include "nsILookAndFeel.h"
 #include "nsRepeatService.h"
 #include "nsBoxLayoutState.h"
 #include "nsSprocketLayout.h"
@@ -106,7 +104,6 @@ nsSliderFrame::nsSliderFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 // stop timer
 nsSliderFrame::~nsSliderFrame()
 {
-   mRedrawImmediate = PR_FALSE;
 }
 
 NS_IMETHODIMP
@@ -133,8 +130,7 @@ nsSliderFrame::RemoveFrame(nsIAtom*        aListName,
                            nsIFrame*       aOldFrame)
 {
   nsresult rv = nsBoxFrame::RemoveFrame(aListName, aOldFrame);
-  PRInt32 start = GetChildCount();
-  if (start == 0)
+  if (mFrames.IsEmpty())
     RemoveListener();
 
   return rv;
@@ -145,9 +141,9 @@ nsSliderFrame::InsertFrames(nsIAtom*        aListName,
                             nsIFrame*       aPrevFrame,
                             nsIFrame*       aFrameList)
 {
-  PRInt32 start = GetChildCount();
+  PRBool wasEmpty = mFrames.IsEmpty();
   nsresult rv = nsBoxFrame::InsertFrames(aListName, aPrevFrame, aFrameList);
-  if (start == 0)
+  if (wasEmpty)
     AddListener();
 
   return rv;
@@ -159,9 +155,9 @@ nsSliderFrame::AppendFrames(nsIAtom*        aListName,
 {
   // if we have no children and on was added then make sure we add the
   // listener
-  PRInt32 start = GetChildCount();
+  PRBool wasEmpty = mFrames.IsEmpty();
   nsresult rv = nsBoxFrame::AppendFrames(aListName, aFrameList);
-  if (start == 0)
+  if (wasEmpty)
     AddListener();
 
   return rv;
@@ -223,7 +219,7 @@ nsSliderFrame::AttributeChanged(PRInt32 aNameSpaceID,
                                              aModType);
   // if the current position changes
   if (aAttribute == nsGkAtoms::curpos) {
-     rv = CurrentPositionChanged(GetPresContext());
+     rv = CurrentPositionChanged(GetPresContext(), PR_FALSE);
      NS_ASSERTION(NS_SUCCEEDED(rv), "failed to change position");
      if (NS_FAILED(rv))
         return rv;
@@ -265,9 +261,8 @@ nsSliderFrame::AttributeChanged(PRInt32 aNameSpaceID,
       aAttribute == nsGkAtoms::pageincrement ||
       aAttribute == nsGkAtoms::increment) {
 
-      AddStateBits(NS_FRAME_IS_DIRTY);
       GetPresContext()->PresShell()->
-        FrameNeedsReflow(this, nsIPresShell::eStyleChange);
+        FrameNeedsReflow(this, nsIPresShell::eStyleChange, NS_FRAME_IS_DIRTY);
   }
 
   return rv;
@@ -398,20 +393,22 @@ nsSliderFrame::DoLayout(nsBoxLayoutState& aState)
   if (float(maxpos) != 0)
     mRatio = float(ourmaxpos) / float(maxpos);
 
-  nscoord curpos = (curpospx - minpospx) * onePixel;
+  // in reverse mode, curpos is reversed such that lower values are to the
+  // right or bottom and increase leftwards or upwards. In this case, use the
+  // offset from the end instead of the beginning.
+  PRBool reverse = mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::dir,
+                                         nsGkAtoms::reverse, eCaseMatters);
+  nscoord pos = reverse ? (maxpospx - curpospx) : (curpospx - minpospx);
 
-  // set the thumbs y coord to be the current pos * the ratio.
-  nscoord pos = nscoord(float(curpos)*mRatio);
+  // set the thumb's coord to be the current pos * the ratio.
   nsRect thumbRect(clientRect.x, clientRect.y, thumbSize.width, thumbSize.height);
-
   if (isHorizontal)
-    thumbRect.x += pos;
+    thumbRect.x += nscoord(float(pos * onePixel) * mRatio);
   else
-    thumbRect.y += pos;
+    thumbRect.y += nscoord(float(pos * onePixel) * mRatio);
 
   nsRect oldThumbRect(thumbBox->GetRect());
   LayoutChildAt(aState, thumbBox, thumbRect);
-
 
   SyncLayout(aState);
 
@@ -442,10 +439,6 @@ nsSliderFrame::HandleEvent(nsPresContext* aPresContext,
 
   if (isDraggingThumb())
   {
-      // we want to draw immediately if the user doing it directly with the
-      // mouse that makes redrawing much faster.
-      mRedrawImmediate = PR_TRUE;
-
     switch (aEvent->message) {
     case NS_MOUSE_MOVE: {
       nsPoint eventPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent,
@@ -494,10 +487,10 @@ nsSliderFrame::HandleEvent(nsPresContext* aPresContext,
        if (isMouseOutsideThumb)
        {
          // XXX see bug 81586
-         SetCurrentPosition(scrollbar, thumbFrame, (int) (mThumbStart / onePixel / mRatio), PR_FALSE);
+         SetCurrentPosition(scrollbar, (int) (mThumbStart / onePixel / mRatio),
+                            PR_FALSE, PR_TRUE);
          return NS_OK;
        }
-
 
        // convert to pixels
        nscoord pospx = pos/onePixel;
@@ -514,8 +507,7 @@ nsSliderFrame::HandleEvent(nsPresContext* aPresContext,
        }
 
        // set it
-       SetCurrentPosition(scrollbar, thumbFrame, pospx, PR_FALSE);
-
+       SetCurrentPosition(scrollbar, pospx, PR_FALSE, PR_TRUE);
     }
     break;
 
@@ -530,14 +522,10 @@ nsSliderFrame::HandleEvent(nsPresContext* aPresContext,
           nsRepeatService::GetInstance()->Stop();
           mChange = 0;
         }
-        mRedrawImmediate = PR_FALSE;//we MUST call nsFrame HandleEvent for mouse ups to maintain the selection state and capture state.
+        //we MUST call nsFrame HandleEvent for mouse ups to maintain the selection state and capture state.
         return nsFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
       }
     }
-
-    // we want to draw immediately if the user doing it directly with the
-    // mouse that makes redrawing much faster. Switch it back now.
-    mRedrawImmediate = PR_FALSE;
 
     //return nsFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
     return NS_OK;
@@ -566,12 +554,13 @@ nsSliderFrame::HandleEvent(nsPresContext* aPresContext,
     thumbLength /= onePixel;
     pospx -= (thumbLength/2);
 
-
     // convert to our internal coordinate system
     pospx = nscoord(pospx/mRatio);
 
     // set it
-    SetCurrentPosition(scrollbar, thumbFrame, pospx, PR_FALSE);
+    nsWeakFrame weakFrame(this);
+    SetCurrentPosition(scrollbar, pospx, PR_FALSE, PR_FALSE);
+    NS_ENSURE_TRUE(weakFrame.IsAlive(), NS_OK);
 
     DragThumb(PR_TRUE);
 
@@ -610,7 +599,7 @@ nsSliderFrame::GetScrollbar()
 }
 
 void
-nsSliderFrame::PageUpDown(nsIFrame* aThumbFrame, nscoord change)
+nsSliderFrame::PageUpDown(nscoord change)
 {
   // on a page up or down get our page increment. We get this by getting the scrollbar we are in and
   // asking it for the current position and the page increment. If we are not in a scrollbar we will
@@ -619,18 +608,32 @@ nsSliderFrame::PageUpDown(nsIFrame* aThumbFrame, nscoord change)
   nsCOMPtr<nsIContent> scrollbar;
   scrollbar = GetContentOfBox(scrollbarBox);
 
+  if (mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::dir,
+                            nsGkAtoms::reverse, eCaseMatters))
+    change = -change;
+
   if (mScrollbarListener)
     mScrollbarListener->PagedUpDown(); // Let the listener decide our increment.
 
   nscoord pageIncrement = GetPageIncrement(scrollbar);
   PRInt32 curpos = GetCurrentPosition(scrollbar);
   PRInt32 minpos = GetMinPosition(scrollbar);
-  SetCurrentPosition(scrollbar, aThumbFrame, curpos - minpos + change*pageIncrement, PR_TRUE);
+  PRInt32 maxpos = GetMaxPosition(scrollbar);
+
+  // get the new position and make sure it is in bounds
+  PRInt32 newpos = curpos - minpos + change * pageIncrement;
+  if (newpos < minpos || maxpos < minpos)
+    newpos = minpos;
+  else if (newpos > maxpos)
+    newpos = maxpos;
+
+  SetCurrentPositionInternal(scrollbar, newpos, PR_TRUE, PR_FALSE);
 }
 
 // called when the current position changed and we need to update the thumb's location
 nsresult
-nsSliderFrame::CurrentPositionChanged(nsPresContext* aPresContext)
+nsSliderFrame::CurrentPositionChanged(nsPresContext* aPresContext,
+                                      PRBool aImmediateRedraw)
 {
   nsIBox* scrollbarBox = GetScrollbar();
   nsCOMPtr<nsIContent> scrollbar;
@@ -686,7 +689,7 @@ nsSliderFrame::CurrentPositionChanged(nsPresContext* aPresContext)
                          thumbFrame->GetOverflowRect() + newThumbRect.TopLeft());
 
     // redraw just the change
-    Invalidate(changeRect, mRedrawImmediate);
+    Invalidate(changeRect, aImmediateRedraw);
     
     if (mScrollbarListener)
       mScrollbarListener->PositionChanged(aPresContext, mCurPos, curpos);
@@ -710,23 +713,39 @@ static void UpdateAttribute(nsIContent* aScrollbar, nscoord aNewPos, PRBool aNot
 }
 
 // newpos should be passed to this function as a position as if the minpos is 0.
-// That is, the minpos will be added to the position by this function.
+// That is, the minpos will be added to the position by this function. In a reverse
+// direction slider, the newpos should be the distance from the end.
 void
-nsSliderFrame::SetCurrentPosition(nsIContent* scrollbar, nsIFrame* aThumbFrame, nscoord newpos, PRBool aIsSmooth)
+nsSliderFrame::SetCurrentPosition(nsIContent* scrollbar, nscoord newpos,
+                                  PRBool aIsSmooth, PRBool aImmediateRedraw)
 {
-
-   // get our current, min and max position from our content node
+   // get min and max position from our content node
   PRInt32 minpos = GetMinPosition(scrollbar);
   PRInt32 maxpos = GetMaxPosition(scrollbar);
 
-  newpos += minpos;
+  // in reverse direction sliders, flip the value so that it goes from
+  // right to left, or bottom to top.
+  if (mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::dir,
+                            nsGkAtoms::reverse, eCaseMatters))
+    newpos = maxpos - newpos;
+  else
+    newpos += minpos;
 
   // get the new position and make sure it is in bounds
   if (newpos < minpos || maxpos < minpos)
-      newpos = minpos;
+    newpos = minpos;
   else if (newpos > maxpos)
-      newpos = maxpos;
+    newpos = maxpos;
 
+  SetCurrentPositionInternal(scrollbar, newpos, aIsSmooth, aImmediateRedraw);
+}
+
+void
+nsSliderFrame::SetCurrentPositionInternal(nsIContent* aScrollbar, nscoord newpos,
+                                          PRBool aIsSmooth,
+                                          PRBool aImmediateRedraw)
+{
+  nsCOMPtr<nsIContent> scrollbar = aScrollbar;
   nsIBox* scrollbarBox = GetScrollbar();
   nsIScrollbarFrame* scrollbarFrame;
   CallQueryInterface(scrollbarBox, &scrollbarFrame);
@@ -735,10 +754,19 @@ nsSliderFrame::SetCurrentPosition(nsIContent* scrollbar, nsIFrame* aThumbFrame, 
     // See if we have a mediator.
     nsIScrollbarMediator* mediator = scrollbarFrame->GetScrollbarMediator();
     if (mediator) {
+      nsRefPtr<nsPresContext> context = GetPresContext();
+      nsCOMPtr<nsIContent> content = GetContent();
       mediator->PositionChanged(scrollbarFrame, GetCurrentPosition(scrollbar), newpos);
       // 'mediator' might be dangling now...
       UpdateAttribute(scrollbar, newpos, PR_FALSE, aIsSmooth);
-      CurrentPositionChanged(GetPresContext());
+      nsIPresShell* shell = context->GetPresShell();
+      if (shell) {
+        nsIFrame* frame = shell->GetPrimaryFrameFor(content);
+        if (frame && frame->GetType() == nsGkAtoms::sliderFrame) {
+          NS_STATIC_CAST(nsSliderFrame*, frame)->
+            CurrentPositionChanged(frame->GetPresContext(), aImmediateRedraw);
+        }
+      }
       return;
     }
   }
@@ -749,6 +777,12 @@ nsSliderFrame::SetCurrentPosition(nsIContent* scrollbar, nsIFrame* aThumbFrame, 
   printf("Current Pos=%d\n",newpos);
 #endif
 
+}
+
+nsIAtom*
+nsSliderFrame::GetType() const
+{
+  return nsGkAtoms::sliderFrame;
 }
 
 NS_IMETHODIMP
@@ -805,24 +839,41 @@ nsSliderFrame::MouseDown(nsIDOMEvent* aMouseEvent)
     scrollToClick = PR_TRUE;
   }
 
+  // Check if we should scroll-to-click regardless of the pressed button and
+  // modifiers
+  if (!scrollToClick) {
+    nsresult rv;
+    nsCOMPtr<nsILookAndFeel> lookNFeel =
+      do_GetService("@mozilla.org/widget/lookandfeel;1", &rv);
+    if (NS_SUCCEEDED(rv)) {
+      PRInt32 scrollToClickMetric;
+      rv = lookNFeel->GetMetric(nsILookAndFeel::eMetric_ScrollToClick,
+                                scrollToClickMetric);
+      if (NS_SUCCEEDED(rv) && scrollToClickMetric == 1)
+        scrollToClick = PR_TRUE;
+    }
+  }
+
   PRInt32 clientPosPx;
   nsIntRect screenRect = GetScreenRect();
- if (isHorizontal) {
+  if (isHorizontal) {
     mouseEvent->GetScreenX(&clientPosPx);
     clientPosPx -= screenRect.x;
   } else {
     mouseEvent->GetScreenY(&clientPosPx);
     clientPosPx -= screenRect.y;
   }
-
+  
   nsPresContext* presContext = GetPresContext();
   nscoord pos = presContext->IntScaledPixelsToTwips(clientPosPx);
 
   // If shift click or middle button, first
   // place the middle of the slider thumb under the click
+  nsCOMPtr<nsIContent> scrollbar;
+  nscoord pospx = 0;
   if (scrollToClick) {
     nscoord onePixel = GetPresContext()->IntScaledPixelsToTwips(1);
-    nscoord pospx = pos/onePixel;
+    pospx = pos/onePixel;
 
     // adjust so that the middle of the thumb is placed under the click
     nsIFrame* thumbFrame = mFrames.FirstChild();
@@ -838,11 +889,7 @@ nsSliderFrame::MouseDown(nsIDOMEvent* aMouseEvent)
     pospx = nscoord(pospx/mRatio);
 
     nsIBox* scrollbarBox = GetScrollbar();
-    nsCOMPtr<nsIContent> scrollbar;
     scrollbar = GetContentOfBox(scrollbarBox);
-
-    // set it
-    SetCurrentPosition(scrollbar, thumbFrame, pospx, PR_FALSE);
   }
 
   DragThumb(PR_TRUE);
@@ -860,6 +907,9 @@ nsSliderFrame::MouseDown(nsIDOMEvent* aMouseEvent)
   mDragStart = pos - mThumbStart;
   //printf("Pressed mDragStart=%d\n",mDragStart);
 
+  if (scrollToClick) {
+    SetCurrentPosition(scrollbar, pospx, PR_FALSE, PR_FALSE);
+  }
   return NS_OK;
 }
 
@@ -922,10 +972,8 @@ nsSliderFrame::AddListener()
 
   nsIFrame* thumbFrame = mFrames.FirstChild();
   if (thumbFrame) {
-    nsCOMPtr<nsIDOMEventReceiver>
-      receiver(do_QueryInterface(thumbFrame->GetContent()));
-
-    receiver->AddEventListenerByIID(mMediator, NS_GET_IID(nsIDOMMouseListener));
+    thumbFrame->GetContent()->
+      AddEventListenerByIID(mMediator, NS_GET_IID(nsIDOMMouseListener));
   }
 }
 
@@ -938,10 +986,8 @@ nsSliderFrame::RemoveListener()
   if (!thumbFrame)
     return;
 
-  nsCOMPtr<nsIDOMEventReceiver>
-    receiver(do_QueryInterface(thumbFrame->GetContent()));
-
-  receiver->RemoveEventListenerByIID(mMediator, NS_GET_IID(nsIDOMMouseListener));
+  thumbFrame->GetContent()->
+    RemoveEventListenerByIID(mMediator, NS_GET_IID(nsIDOMMouseListener));
 }
 
 NS_IMETHODIMP
@@ -972,10 +1018,8 @@ nsSliderFrame::HandlePress(nsPresContext* aPresContext,
   mChange = change;
   DragThumb(PR_TRUE);
   mDestinationPoint = eventPoint;
-  PageUpDown(thumbFrame, change);
-  
   nsRepeatService::GetInstance()->Start(mMediator);
-  
+  PageUpDown(change);
   return NS_OK;
 }
 
@@ -1090,7 +1134,7 @@ NS_IMETHODIMP_(void) nsSliderFrame::Notify(nsITimer *timer)
     if (stop) {
        nsRepeatService::GetInstance()->Stop();
     } else {
-      PageUpDown(thumbFrame, mChange);
+      PageUpDown(mChange);
     }
 }
 
