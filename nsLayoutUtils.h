@@ -326,7 +326,7 @@ public:
    * for some reason the coordinates for the mouse are not known (e.g.,
    * the event is not a GUI event).
    */
-  static nsPoint GetEventCoordinatesRelativeTo(const nsEvent* aEvent,
+  static nsPoint GetEventCoordinatesRelativeTo(nsEvent* aEvent,
                                                nsIFrame* aFrame);
 
 /**
@@ -416,8 +416,8 @@ public:
                                               nsPoint aDelta,
                                               const nsRect& aCopyRect,
                                               nsRegion* aRepaintRegion);
-
-static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
+                                       
+  static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
                                          nsIDrawingSurface* surface,
                                          const nsRect& aRect,
                                          nsIRenderingContext** aResult);
@@ -517,19 +517,6 @@ static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
   static PRBool IsViewportScrollbarFrame(nsIFrame* aFrame);
 
   /**
-   * Return the value of aStyle as an nscoord if it can be determined without
-   * reference to ancestors or children (e.g. is not a percentage width)
-   * @param aStyle the style coord
-   * @param aRenderingContext the rendering context to use for font measurement
-   * @param aFrame the frame whose style context should be used for font information
-   * @param aResult the nscoord value of the style coord
-   * @return TRUE if the unit is eStyleUnit_Coord or eStyleUnit_Chars
-   */
-  static PRBool GetAbsoluteCoord(const nsStyleCoord& aStyle,
-                                 nsIRenderingContext* aRenderingContext,
-                                 nsIFrame* aFrame,
-                                 nscoord& aResult);
-  /**
    * Get the contribution of aFrame to its containing block's intrinsic
    * width.  This considers the child's intrinsic width, its 'width',
    * 'min-width', and 'max-width' properties, and its padding, border,
@@ -540,45 +527,12 @@ static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
                                        nsIFrame* aFrame,
                                        IntrinsicWidthType aType);
 
-  /*
-   * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block width.
-   */
   static nscoord ComputeWidthDependentValue(
                    nsIRenderingContext* aRenderingContext,
                    nsIFrame*            aFrame,
                    nscoord              aContainingBlockWidth,
                    const nsStyleCoord&  aCoord);
 
-  /*
-   * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block width, and enumerated values are for width,
-   * min-width, or max-width.  Returns the content-box width value based
-   * on aContentEdgeToBoxSizing and aBoxSizingToMarginEdge (which are
-   * also used for the enumerated values for width.  This function does
-   * not handle 'auto'.  It ensures that the result is nonnegative.
-   *
-   * @param aRenderingContext Rendering context for font measurement/metrics.
-   * @param aFrame Frame whose (min-/max-/)width is being computed
-   * @param aContainingBlockWidth Width of aFrame's containing block.
-   * @param aContentEdgeToBoxSizing The sum of any left/right padding and
-   *          border that goes inside the rect chosen by -moz-box-sizing.
-   * @param aBoxSizingToMarginEdge The sum of any left/right padding, border,
-   *          and margin that goes outside the rect chosen by -moz-box-sizing.
-   * @param aCoord The width value to compute.
-   */
-  static nscoord ComputeWidthValue(
-                   nsIRenderingContext* aRenderingContext,
-                   nsIFrame*            aFrame,
-                   nscoord              aContainingBlockWidth,
-                   nscoord              aContentEdgeToBoxSizing,
-                   nscoord              aBoxSizingToMarginEdge,
-                   const nsStyleCoord&  aCoord);
-
-  /*
-   * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block height.
-   */
   static nscoord ComputeHeightDependentValue(
                    nsIRenderingContext* aRenderingContext,
                    nsIFrame*            aFrame,
@@ -588,7 +542,7 @@ static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
   static nsSize ComputeSizeWithIntrinsicDimensions(
                     nsIRenderingContext* aRenderingContext,
                     nsIFrame* aFrame, nsSize aIntrinsicSize, nsSize aCBSize,
-                    nsSize aMargin, nsSize aBorder, nsSize aPadding);
+                    nsSize aBorder, nsSize aPadding);
 
   // Implement nsIFrame::GetPrefWidth in terms of nsIFrame::AddInlinePrefWidth
   static nscoord PrefWidthFromInline(nsIFrame* aFrame,
@@ -639,35 +593,30 @@ static nsresult CreateOffscreenContext(nsIDeviceContext* deviceContext,
    */
   static nsIFrame* GetClosestLayer(nsIFrame* aFrame);
 
+  #ifdef MOZ_CAIRO_GFX
   /**
-   * Set the font on aRC based on the style in aSC
+   * Draw a single image.
+   *   @param aImage            The image.
+   *   @param aRenderingContext Where to draw the image, set up with an
+   *                            appropriate scale and transform for drawing in
+   *                            app units (aDestRect).
+   *   @param aDestRect         Where to draw the image (app units).
+   *   @param aDirtyRect        Draw only within this region (rounded to the
+   *                            nearest pixel); the intersection of
+   *                            invalidation and clipping.
+   *   @param aSourceRect       If null, draw the entire image so it fits in
+   *                            aDestRect.  If non-null, the subregion of the
+   *                            image that should be drawn (in app units, such
+   *                            that converting it to CSS pixels yields image
+   *                            pixels).
    */
-  static void SetFontFromStyle(nsIRenderingContext* aRC, nsStyleContext* aSC);
+  static nsresult DrawImage(nsIRenderingContext* aRenderingContext,
+                            imgIContainer* aImage,
+                            const nsRect& aDestRect,
+                            const nsRect& aDirtyRect,
+                            const nsRect* aSourceRect = nsnull);
 
-  /**
-   * Convert an eStyleUnit_Chars nsStyleCoord to an nscoord.
-   *
-   * @param aStyle the style coord
-   * @param aRenderingContext the rendering context to use for font measurement
-   * @param aStyleContext the style context to use for font infomation
-   */
-  static nscoord CharsToCoord(const nsStyleCoord& aStyle,
-                              nsIRenderingContext* aRenderingContext,
-                              nsStyleContext* aStyleContext);
-
-  /**
-   * Determine if any style coordinate is nonzero
-   *   @param aCoord the style sides
-   *   @return PR_TRUE unless all the coordinates are 0%, 0 or null.
-   */
-  static PRBool HasNonZeroSide(const nsStyleSides& aSides);
-
-  /**
-   * Determine if a widget is likely to require transparency or translucency.
-   *   @param aFrame the frame of a <window>, <popup> or <menupopup> element.
-   *   @return a value suitable for passing to SetWindowTranslucency
-   */
-  static PRBool FrameHasTransparency(nsIFrame* aFrame);
+#endif
 };
 
 #endif // nsLayoutUtils_h__

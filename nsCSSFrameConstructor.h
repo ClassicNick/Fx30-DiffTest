@@ -759,20 +759,20 @@ private:
   GetFirstLineStyle(nsIContent*      aContent,
                     nsStyleContext*  aStyleContext);
 
-  PRBool ShouldHaveFirstLetterStyle(nsIContent*      aContent,
-                                    nsStyleContext*  aStyleContext);
+  PRBool HaveFirstLetterStyle(nsIContent*      aContent,
+                              nsStyleContext*  aStyleContext);
 
   // Check whether a given block has first-letter style.  Make sure to
   // only pass in blocks!  And don't pass in null either.
-  PRBool HasFirstLetterStyle(nsIFrame* aBlockFrame);
+  PRBool HaveFirstLetterStyle(nsIFrame* aBlockFrame);
 
-  PRBool ShouldHaveFirstLineStyle(nsIContent*      aContent,
-                                  nsStyleContext*  aStyleContext);
+  PRBool HaveFirstLineStyle(nsIContent*      aContent,
+                            nsStyleContext*  aStyleContext);
 
-  void ShouldHaveSpecialBlockStyle(nsIContent*      aContent,
-                                   nsStyleContext*  aStyleContext,
-                                   PRBool*          aHaveFirstLetterStyle,
-                                   PRBool*          aHaveFirstLineStyle);
+  void HaveSpecialBlockStyle(nsIContent*      aContent,
+                             nsStyleContext*  aStyleContext,
+                             PRBool*          aHaveFirstLetterStyle,
+                             PRBool*          aHaveFirstLineStyle);
 
   // |aContentParentFrame| should be null if it's really the same as
   // |aParentFrame|.
@@ -827,7 +827,7 @@ private:
 
   nsresult ReframeContainingBlock(nsIFrame* aFrame);
 
-  nsresult StyleChangeReflow(nsIFrame* aFrame);
+  nsresult StyleChangeReflow(nsIFrame* aFrame, nsIAtom* aAttribute);
 
   /** Helper function that searches the immediate child frames 
     * (and their children if the frames are "special")
@@ -950,10 +950,8 @@ private:
 
   // see if aContent and aSibling are legitimate siblings due to restrictions
   // imposed by table columns
-  // XXXbz this code is generally wrong, since the frame for aContent
-  // may be constructed based on tag, not based on aDisplay!
   PRBool IsValidSibling(nsIFrame*              aParentFrame,
-                        nsIFrame*              aSibling,
+                        const nsIFrame&        aSibling,
                         PRUint8                aSiblingDisplay,
                         nsIContent&            aContent,
                         PRUint8&               aDisplay);

@@ -165,7 +165,7 @@ protected:
 
     PRUint32              mBlinkRate;         // time for one cyle (off then on), in milliseconds
 
-    nscoord               mCaretTwipsWidth;   // caret width in twips. this gets calculated laziiy
+    nscoord               mCaretTwipsWidth;   // caret width. this gets calculated laziiy
     nscoord               mBidiIndicatorTwipsSize;   // width and height of bidi indicator
 
     PRPackedBool          mVisible;           // is the caret blinking

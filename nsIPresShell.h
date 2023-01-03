@@ -97,15 +97,13 @@ template<class E> class nsCOMArray;
 class nsWeakFrame;
 class nsIScrollableFrame;
 class gfxASurface;
-class gfxContext;
 
 typedef short SelectionType;
-typedef PRUint32 nsFrameState;
 
-// 9562bb2b-990c-4875-aafd-bd46fc9a4fc1
+// DC543B71-6F1A-4B9F-B4CF-693AEC4BA24A
 #define NS_IPRESSHELL_IID \
-{ 0x9562bb2b, 0x990c, 0x4875, \
-  { 0xaa, 0xfd, 0xbd, 0x46, 0xfc, 0x9a, 0x4f, 0xc1 } }
+{ 0xdc543b71, 0x6f1a, 0x4b9f, \
+  { 0xb4, 0xcf, 0x69, 0x3a, 0xec, 0x4b, 0xa2, 0x4a } }
 
 // Constants for ScrollContentIntoView() function
 #define NS_PRESSHELL_SCROLL_TOP      0
@@ -254,8 +252,7 @@ public:
    */
   nsFrameSelection* FrameSelection() { return mSelection; }
 
-  // Make shell be a document observer.  If called after Destroy() has
-  // been called on the shell, this will be ignored.
+  // Make shell be a document observer
   NS_IMETHOD BeginObservingDocument() = 0;
 
   // Make shell stop being a document observer
@@ -273,11 +270,7 @@ public:
    * object and then reflows the frame model into the specified width and
    * height.
    *
-   * The coordinates for aWidth and aHeight must be in standard nscoords.
-   *
-   * Callers of this method must hold a reference to this shell that
-   * is guaranteed to survive through arbitrary script execution.
-   * Calling InitialReflow can execute arbitrary script.
+   * The coordinates for aWidth and aHeight must be in standard nscoord's.
    */
   NS_IMETHOD InitialReflow(nscoord aWidth, nscoord aHeight) = 0;
 
@@ -348,11 +341,10 @@ public:
                                     nsIFrame** aPlaceholderFrame) const = 0;
 
   /**
-   * Tell the pres shell that a frame needs to be marked dirty and needs
-   * Reflow.  It's OK if this is an ancestor of the frame needing reflow as
-   * long as the ancestor chain between them doesn't cross a reflow root.  The
-   * bit to add should be either NS_FRAME_IS_DIRTY or
-   * NS_FRAME_HAS_DIRTY_CHILDREN (but not both!).
+   * Tell the pres shell that a frame is dirty (as indicated by bits)
+   * and needs Reflow.  It's OK if this is an ancestor of the frame needing
+   * reflow as long as the ancestor chain between them doesn't cross a reflow
+   * root.
    */
   enum IntrinsicDirty {
     // XXXldb eResize should be renamed
@@ -361,8 +353,7 @@ public:
     eStyleChange // Do eTreeChange, plus all of aFrame's descendants
   };
   NS_IMETHOD FrameNeedsReflow(nsIFrame *aFrame,
-                              IntrinsicDirty aIntrinsicDirty,
-                              nsFrameState aBitToAdd) = 0;
+                              IntrinsicDirty aIntrinsicDirty) = 0;
 
   NS_IMETHOD CancelAllPendingReflows() = 0;
 
@@ -645,8 +636,7 @@ public:
   virtual void VerifyStyleTree() = 0;
 #endif
 
-  static PRBool gIsAccessibilityActive;
-  static PRBool IsAccessibilityActive() { return gIsAccessibilityActive; }
+  PRBool IsAccessibilityActive() { return mIsAccessibilityActive; }
 
   /**
    * Stop all active elements (plugins and the caret) in this presentation and
@@ -671,9 +661,7 @@ public:
   {
     mForwardingContainer = aContainer;
   }
-
-  virtual void HidePopups() = 0;
-
+  
   /**
    * Dump window contents into a new offscreen rendering context.
    * @param aRect is the region to capture into the offscreen buffer, in the
@@ -697,8 +685,17 @@ public:
                              nscolor aBackgroundColor,
                              nsIRenderingContext** aRenderedContext) = 0;
 
+  virtual void HidePopups() = 0;
+
   void AddWeakFrame(nsWeakFrame* aWeakFrame);
   void RemoveWeakFrame(nsWeakFrame* aWeakFrame);
+
+  void SetInEagerStartLayout(PRBool aInEagerStartLayout) {
+    mInEagerStartLayout = aInEagerStartLayout;
+  }
+  PRBool IsInEagerStartLayout() const {
+    return mInEagerStartLayout;
+  }
 
 #ifdef NS_DEBUG
   nsIFrame* GetDrawEventTargetFrame() { return mDrawEventTargetFrame; }
@@ -739,6 +736,10 @@ protected:
   // Set to true when the accessibility service is being used to mirror
   // the dom/layout trees
   PRPackedBool              mIsAccessibilityActive;
+
+  // True if we're under an "eager" (that is, called before there is
+  // much content in the document) StartLayout call.
+  PRPackedBool              mInEagerStartLayout;
 
   // A list of weak frames. This is a pointer to the last item in the list.
   nsWeakFrame*              mWeakFrames;

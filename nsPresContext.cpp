@@ -76,6 +76,7 @@
 #include "nsThreadUtils.h"
 #include "nsFrameManager.h"
 #include "nsLayoutUtils.h"
+#include "nsIViewManager.h"
 
 #ifdef IBMBIDI
 #include "nsBidiPresUtils.h"
@@ -143,12 +144,11 @@ IsVisualCharset(const nsCString& aCharset)
 #endif // IBMBIDI
 
 
-PR_STATIC_CALLBACK(PRBool) destroy_loads(nsHashKey *aKey, void *aData, void* closure)
+PR_STATIC_CALLBACK(PLDHashOperator)
+destroy_loads(const void * aKey, nsCOMPtr<nsImageLoader>& aData, void* closure)
 {
-  nsISupports *sup = NS_REINTERPRET_CAST(nsISupports*, aData);
-  nsImageLoader *loader = NS_REINTERPRET_CAST(nsImageLoader*, sup);
-  loader->Destroy();
-  return PR_TRUE;
+  aData->Destroy();
+  return PL_DHASH_NEXT;
 }
 
 static NS_DEFINE_CID(kLookAndFeelCID,  NS_LOOKANDFEEL_CID);
@@ -160,23 +160,24 @@ static NS_DEFINE_CID(kSelectionImageService, NS_SELECTIONIMAGESERVICE_CID);
 
 nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
   : mType(aType), mDocument(aDocument), mTextZoom(1.0),
-    mPageSize(-1, -1),
+    mPageSize(-1, -1), mPPScale(1.0f),
     mViewportStyleOverflow(NS_STYLE_OVERFLOW_AUTO, NS_STYLE_OVERFLOW_AUTO),
     mImageAnimationModePref(imgIContainer::kNormalAnimMode),
+    // Font sizes default to zero; they will be set in GetFontPreferences
     mDefaultVariableFont("serif", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                         NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(12)),
-    mDefaultFixedFont("monospace", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                      NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(10)),
+                         NS_FONT_WEIGHT_NORMAL, 0, 0),
+    mDefaultFixedFont("monospace", NS_FONT_STYLE_NORMAL,
+                      NS_FONT_VARIANT_NORMAL, NS_FONT_WEIGHT_NORMAL, 0, 0),
     mDefaultSerifFont("serif", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                      NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(12)),
-    mDefaultSansSerifFont("sans-serif", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                          NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(12)),
-    mDefaultMonospaceFont("monospace", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                          NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(10)),
-    mDefaultCursiveFont("cursive", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                        NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(12)),
-    mDefaultFantasyFont("fantasy", NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
-                        NS_FONT_WEIGHT_NORMAL, 0, NSIntPointsToTwips(12)),
+                      NS_FONT_WEIGHT_NORMAL, 0, 0),
+    mDefaultSansSerifFont("sans-serif", NS_FONT_STYLE_NORMAL,
+                          NS_FONT_VARIANT_NORMAL, NS_FONT_WEIGHT_NORMAL, 0, 0),
+    mDefaultMonospaceFont("monospace", NS_FONT_STYLE_NORMAL,
+                          NS_FONT_VARIANT_NORMAL, NS_FONT_WEIGHT_NORMAL, 0, 0),
+    mDefaultCursiveFont("cursive", NS_FONT_STYLE_NORMAL,
+                        NS_FONT_VARIANT_NORMAL, NS_FONT_WEIGHT_NORMAL, 0, 0),
+    mDefaultFantasyFont("fantasy", NS_FONT_STYLE_NORMAL,
+                        NS_FONT_VARIANT_NORMAL, NS_FONT_WEIGHT_NORMAL, 0, 0),
     mCanPaginatedScroll(PR_FALSE),
     mIsRootPaginatedDocument(PR_FALSE)
 {
@@ -226,7 +227,7 @@ nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
 
 nsPresContext::~nsPresContext()
 {
-  mImageLoaders.Enumerate(destroy_loads);
+  mImageLoaders.Enumerate(destroy_loads, nsnull);
 
   NS_PRECONDITION(!mShell, "Presshell forgot to clear our mShell pointer");
   SetShell(nsnull);
@@ -272,6 +273,9 @@ nsPresContext::~nsPresContext()
 
   delete mBidiUtils;
 #endif // IBMBIDI
+  nsContentUtils::UnregisterPrefCallback("layout.css.dpi",
+                                         nsPresContext::PrefChangedCallback,
+                                         this);
 
   NS_IF_RELEASE(mDeviceContext);
   NS_IF_RELEASE(mLookAndFeel);
@@ -698,6 +702,9 @@ nsPresContext::Init(nsIDeviceContext* aDeviceContext)
   mDeviceContext = aDeviceContext;
   NS_ADDREF(mDeviceContext);
 
+  if (!mImageLoaders.Init())
+    return NS_ERROR_OUT_OF_MEMORY;
+  
   // Get the look and feel service here; default colors will be initialized
   // from calling GetUserPreferences() when we get a presshell.
   nsresult rv = CallGetService(kLookAndFeelCID, &mLookAndFeel);
@@ -740,6 +747,9 @@ nsPresContext::Init(nsIDeviceContext* aDeviceContext)
   nsContentUtils::RegisterPrefCallback("bidi.", PrefChangedCallback,
                                        this);
 #endif
+  nsContentUtils::RegisterPrefCallback("layout.css.dpi",
+                                       nsPresContext::PrefChangedCallback,
+                                       this);
 
   rv = mEventManager->Init();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -913,13 +923,12 @@ static void SetImgAnimModeOnImgReq(imgIRequest* aImgReq, PRUint16 aMode)
 }
 
  // Enumeration call back for HashTable
-PR_STATIC_CALLBACK(PRBool) set_animation_mode(nsHashKey *aKey, void *aData, void* closure)
+PR_STATIC_CALLBACK(PLDHashOperator)
+set_animation_mode(const void * aKey, nsCOMPtr<nsImageLoader>& aData, void* closure)
 {
-  nsISupports *sup = NS_REINTERPRET_CAST(nsISupports*, aData);
-  nsImageLoader *loader = NS_REINTERPRET_CAST(nsImageLoader*, sup);
-  imgIRequest* imgReq = loader->GetRequest();
+  imgIRequest* imgReq = aData->GetRequest();
   SetImgAnimModeOnImgReq(imgReq, (PRUint16)NS_PTR_TO_INT32(closure));
-  return PR_TRUE;
+  return PL_DHASH_NEXT;
 }
 
 // IMPORTANT: Assumption is that all images for a Presentation 
@@ -1086,25 +1095,21 @@ imgIRequest*
 nsPresContext::LoadImage(imgIRequest* aImage, nsIFrame* aTargetFrame)
 {
   // look and see if we have a loader for the target frame.
-
-  nsVoidKey key(aTargetFrame);
-  nsImageLoader *loader = NS_REINTERPRET_CAST(nsImageLoader*, mImageLoaders.Get(&key)); // addrefs
+  nsCOMPtr<nsImageLoader> loader;
+  mImageLoaders.Get(aTargetFrame, getter_AddRefs(loader));
 
   if (!loader) {
     loader = new nsImageLoader();
     if (!loader)
       return nsnull;
 
-    NS_ADDREF(loader); // new
-
     loader->Init(aTargetFrame, this);
-    mImageLoaders.Put(&key, loader);
+    mImageLoaders.Put(aTargetFrame, loader);
   }
 
   loader->Load(aImage);
 
   imgIRequest *request = loader->GetRequest();
-  NS_RELEASE(loader);
 
   return request;
 }
@@ -1113,14 +1118,13 @@ nsPresContext::LoadImage(imgIRequest* aImage, nsIFrame* aTargetFrame)
 void
 nsPresContext::StopImagesFor(nsIFrame* aTargetFrame)
 {
-  nsVoidKey key(aTargetFrame);
-  nsImageLoader *loader = NS_REINTERPRET_CAST(nsImageLoader*, mImageLoaders.Get(&key)); // addrefs
+  nsCOMPtr<nsImageLoader> loader;
+  mImageLoaders.Get(aTargetFrame, getter_AddRefs(loader));
 
   if (loader) {
     loader->Destroy();
-    NS_RELEASE(loader);
 
-    mImageLoaders.Remove(&key);
+    mImageLoaders.Remove(aTargetFrame);
   }
 }
 
@@ -1137,11 +1141,9 @@ nsPresContext::SetContainer(nsISupports* aHandler)
 already_AddRefed<nsISupports>
 nsPresContext::GetContainerInternal()
 {
-  nsISupports *result;
+  nsISupports *result = nsnull;
   if (mContainer)
     CallQueryReferent(mContainer.get(), &result);
-  else
-    result = nsnull;
 
   return result;
 }

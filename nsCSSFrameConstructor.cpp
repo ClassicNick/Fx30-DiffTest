@@ -365,6 +365,9 @@ NS_NewScrollbarFrame (nsIPresShell* aPresShell, nsStyleContext* aContext);
 nsIFrame*
 NS_NewScrollbarButtonFrame (nsIPresShell* aPresShell, nsStyleContext* aContext);
 
+nsIFrame*
+NS_NewNativeScrollbarFrame (nsIPresShell* aPresShell, nsStyleContext* aContext);
+
 
 #ifdef NOISY_FINDFRAME
 static PRInt32 FFWC_totalCount=0;
@@ -532,16 +535,34 @@ GetIBContainingBlockFor(nsIFrame* aFrame)
 
 //----------------------------------------------------------------------
 
+// XXX this predicate and its cousins need to migrated to a single
+// place in layout - something in nsStyleDisplay maybe?
 static PRBool
-IsInlineOutside(nsIFrame* aFrame)
+IsInlineFrame(nsIFrame* aFrame)
 {
-  return aFrame->GetStyleDisplay()->IsInlineOutside();
+  // XXXwaterson why don't we use |! display->IsBlockLevel()| here?
+  switch (aFrame->GetStyleDisplay()->mDisplay) {
+    case NS_STYLE_DISPLAY_INLINE:
+    case NS_STYLE_DISPLAY_INLINE_BLOCK:
+    case NS_STYLE_DISPLAY_INLINE_TABLE:
+    case NS_STYLE_DISPLAY_INLINE_BOX:
+    case NS_STYLE_DISPLAY_INLINE_GRID:
+    case NS_STYLE_DISPLAY_INLINE_STACK:
+    case NS_STYLE_DISPLAY_DECK:
+    case NS_STYLE_DISPLAY_POPUP:
+    case NS_STYLE_DISPLAY_GROUPBOX:
+      return PR_TRUE;
+    default:
+      break;
+  }
+  return PR_FALSE;
 }
 
+// NeedSpecialFrameReframe uses this until we decide what to do about IsInlineFrame() above
 static PRBool
-IsBlockOutside(nsIFrame* aFrame)
+IsInlineFrame2(nsIFrame* aFrame)
 {
-  return aFrame->GetStyleDisplay()->IsBlockOutside();
+  return !aFrame->GetStyleDisplay()->IsBlockLevel();
 }
 
 //----------------------------------------------------------------------
@@ -554,12 +575,23 @@ IsBlockOutside(nsIFrame* aFrame)
 // child then the block child is migrated upward until it lands in a block
 // parent (the inline frames containing block is where it will end up).
 
+// XXX consolidate these things
+static PRBool
+IsBlockFrame(nsIFrame* aFrame)
+{
+  // XXXwaterson this seems wrong; see IsInlineFrame() immediately
+  // above, which will treat inline-block (e.g.) as an inline. Why
+  // don't we use display->IsBlockLevel() here?
+  const nsStyleDisplay* display = aFrame->GetStyleDisplay();
+  return NS_STYLE_DISPLAY_INLINE != display->mDisplay;
+}
+
 static nsIFrame*
 FindFirstBlock(nsIFrame* aKid, nsIFrame** aPrevKid)
 {
   nsIFrame* prevKid = nsnull;
   while (aKid) {
-    if (!IsInlineOutside(aKid)) {
+    if (IsBlockFrame(aKid)) {
       *aPrevKid = prevKid;
       return aKid;
     }
@@ -575,7 +607,7 @@ FindLastBlock(nsIFrame* aKid)
 {
   nsIFrame* lastBlock = nsnull;
   while (aKid) {
-    if (!IsInlineOutside(aKid)) {
+    if (IsBlockFrame(aKid)) {
       lastBlock = aKid;
     }
     aKid = aKid->GetNextSibling();
@@ -1876,14 +1908,14 @@ nsCSSFrameConstructor::CreateAttributeContent(nsIContent* aParentContent,
                                        getter_AddRefs(content));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  content->SetNativeAnonymous(PR_TRUE);
-
   // Set aContent as the parent content so that event handling works.
   rv = content->BindToTree(mDocument, aParentContent, content, PR_TRUE);
   if (NS_FAILED(rv)) {
     content->UnbindFromTree();
     return rv;
   }
+
+  content->SetNativeAnonymous(PR_TRUE);
 
   // Create a text frame and initialize it
   nsIFrame* textFrame = NS_NewTextFrame(mPresShell, aStyleContext);
@@ -1938,8 +1970,6 @@ nsCSSFrameConstructor::CreateGeneratedFrameFor(nsIFrame*             aParentFram
                                            data.mContent.mImage);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    content->SetNativeAnonymous(PR_TRUE);
-  
     // Set aContent as the parent content and set the document object. This
     // way event handling works
     // Hack the binding parent to make document rules not match (not
@@ -1951,6 +1981,8 @@ nsCSSFrameConstructor::CreateGeneratedFrameFor(nsIFrame*             aParentFram
       return rv;
     }
     
+    content->SetNativeAnonymous(PR_TRUE);
+  
     // Create an image frame and initialize it
     nsIFrame* imageFrame = NS_NewImageFrame(mPresShell, aStyleContext);
     if (NS_UNLIKELY(!imageFrame)) {
@@ -2120,8 +2152,6 @@ nsCSSFrameConstructor::CreateGeneratedFrameFor(nsIFrame*             aParentFram
           NS_ASSERTION(*textPtr, "must implement nsIDOMCharacterData");
         }
 
-        textContent->SetNativeAnonymous(PR_TRUE);
-
         // Set aContent as the parent content so that event handling works.
         nsresult rv = textContent->BindToTree(mDocument, aContent, textContent,
                                               PR_TRUE);
@@ -2129,6 +2159,8 @@ nsCSSFrameConstructor::CreateGeneratedFrameFor(nsIFrame*             aParentFram
           textContent->UnbindFromTree();
           return rv;
         }
+
+        textContent->SetNativeAnonymous(PR_TRUE);
 
         // Create a text frame and initialize it
         textFrame = NS_NewTextFrame(mPresShell, aStyleContext);
@@ -3347,6 +3379,7 @@ IsSpecialContent(nsIContent*     aContent,
 #endif
       aTag == nsGkAtoms::slider ||
       aTag == nsGkAtoms::scrollbar ||
+      aTag == nsGkAtoms::nativescrollbar ||
       aTag == nsGkAtoms::scrollbarbutton ||
 #ifdef MOZ_XUL
       aTag == nsGkAtoms::splitter ||
@@ -3627,8 +3660,8 @@ nsCSSFrameConstructor::ConstructTableCaptionFrame(nsFrameConstructorState& aStat
   nsHTMLContainerFrame::CreateViewForFrame(aNewFrame, nsnull, PR_FALSE);
 
   PRBool haveFirstLetterStyle, haveFirstLineStyle;
-  ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                              &haveFirstLetterStyle, &haveFirstLineStyle);
+  HaveSpecialBlockStyle(aContent, aStyleContext,
+                        &haveFirstLetterStyle, &haveFirstLineStyle);
 
   // The caption frame is a float container
   nsFrameConstructorSaveState floatSaveState;
@@ -3971,8 +4004,8 @@ nsCSSFrameConstructor::ConstructTableCellFrame(nsFrameConstructorState& aState,
 
   if (!aIsPseudo) {
     PRBool haveFirstLetterStyle, haveFirstLineStyle;
-    ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                                &haveFirstLetterStyle, &haveFirstLineStyle);
+    HaveSpecialBlockStyle(aContent, aStyleContext,
+                          &haveFirstLetterStyle, &haveFirstLineStyle);
 
     // The block frame is a float container
     nsFrameConstructorSaveState floatSaveState;
@@ -4274,9 +4307,7 @@ nsCSSFrameConstructor::ConstructDocElementFrame(nsFrameConstructorState& aState,
     else
 #endif 
 #ifdef MOZ_SVG
-    if (aDocElement->GetNameSpaceID() == kNameSpaceID_SVG &&
-        aDocElement->Tag() == nsGkAtoms::svg &&
-        NS_SVGEnabled()) {
+    if (aDocElement->GetNameSpaceID() == kNameSpaceID_SVG && NS_SVGEnabled()) {
       contentFrame = NS_NewSVGOuterSVGFrame(mPresShell, aDocElement, styleContext);
     }
     else 
@@ -4311,8 +4342,8 @@ nsCSSFrameConstructor::ConstructDocElementFrame(nsFrameConstructorState& aState,
 
     if (isBlockFrame) {
       PRBool haveFirstLetterStyle, haveFirstLineStyle;
-      ShouldHaveSpecialBlockStyle(aDocElement, styleContext,
-                                  &haveFirstLetterStyle, &haveFirstLineStyle);
+      HaveSpecialBlockStyle(aDocElement, styleContext,
+                            &haveFirstLetterStyle, &haveFirstLineStyle);
       mInitialContainingBlockIsAbsPosContainer = PR_TRUE;
       aState.PushAbsoluteContainingBlock(contentFrame, absoluteSaveState);
       aState.PushFloatContainingBlock(contentFrame, floatSaveState,
@@ -4774,8 +4805,8 @@ nsCSSFrameConstructor::ConstructButtonFrame(nsFrameConstructorState& aState,
     // input type="button" have only anonymous content
     // The area frame is a float container
     PRBool haveFirstLetterStyle, haveFirstLineStyle;
-    ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                                &haveFirstLetterStyle, &haveFirstLineStyle);
+    HaveSpecialBlockStyle(aContent, aStyleContext,
+                          &haveFirstLetterStyle, &haveFirstLineStyle);
     nsFrameConstructorSaveState floatSaveState;
     aState.PushFloatContainingBlock(areaFrame, floatSaveState,
                                     haveFirstLetterStyle,
@@ -4792,7 +4823,7 @@ nsCSSFrameConstructor::ConstructButtonFrame(nsFrameConstructorState& aState,
     }
 
     rv = ProcessChildren(aState, aContent, areaFrame, PR_TRUE, childItems,
-                         buttonFrame->GetStyleDisplay()->IsBlockOutside());
+                         buttonFrame->GetStyleDisplay()->IsBlockLevel());
     if (NS_FAILED(rv)) return rv;
   
     // Set the areas frame's initial child lists
@@ -5033,8 +5064,8 @@ nsCSSFrameConstructor::InitializeSelectFrame(nsFrameConstructorState& aState,
 
   // The area frame is a float container
   PRBool haveFirstLetterStyle, haveFirstLineStyle;
-  ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                              &haveFirstLetterStyle, &haveFirstLineStyle);
+  HaveSpecialBlockStyle(aContent, aStyleContext,
+                        &haveFirstLetterStyle, &haveFirstLineStyle);
   nsFrameConstructorSaveState floatSaveState;
   aState.PushFloatContainingBlock(scrolledFrame, floatSaveState,
                                   haveFirstLetterStyle, haveFirstLineStyle);
@@ -5101,8 +5132,8 @@ nsCSSFrameConstructor::ConstructFieldSetFrame(nsFrameConstructorState& aState,
 
   // The area frame is a float container
   PRBool haveFirstLetterStyle, haveFirstLineStyle;
-  ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                              &haveFirstLetterStyle, &haveFirstLineStyle);
+  HaveSpecialBlockStyle(aContent, aStyleContext,
+                        &haveFirstLetterStyle, &haveFirstLineStyle);
   nsFrameConstructorSaveState floatSaveState;
   aState.PushFloatContainingBlock(areaFrame, floatSaveState,
                                   haveFirstLetterStyle,
@@ -5492,9 +5523,8 @@ nsCSSFrameConstructor::ConstructHTMLFrame(nsFrameConstructorState& aState,
       }
       if (isFloatContainer) {
         PRBool haveFirstLetterStyle, haveFirstLineStyle;
-        ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                                    &haveFirstLetterStyle,
-                                    &haveFirstLineStyle);
+        HaveSpecialBlockStyle(aContent, aStyleContext,
+                              &haveFirstLetterStyle, &haveFirstLineStyle);
         aState.PushFloatContainingBlock(newFrame, floatSaveState,
                                         PR_FALSE, PR_FALSE);
       }
@@ -5579,8 +5609,7 @@ nsCSSFrameConstructor::CreateAnonymousFrames(nsFrameConstructorState& aState,
                                              PRBool                   aAppendToExisting,
                                              nsFrameItems&            aChildItems)
 {
-  nsIAnonymousContentCreator* creator = nsnull;
-  CallQueryInterface(aParentFrame, &creator);
+  nsCOMPtr<nsIAnonymousContentCreator> creator(do_QueryInterface(aParentFrame));
   if (!creator)
     return NS_OK;
 
@@ -5630,9 +5659,9 @@ nsCSSFrameConstructor::CreateAnonymousFrames(nsFrameConstructorState& aState,
       // create the frame and attach it to our frame
       ConstructFrame(aState, content, aParentFrame, aChildItems);
     }
-  }
 
-  creator->PostCreateFrames();
+    creator->PostCreateFrames();
+  }
 
   // process the current pseudo frame state
   if (!aState.mPseudoFrames.IsEmpty()) {
@@ -5768,8 +5797,6 @@ nsCSSFrameConstructor::ConstructXULFrame(nsFrameConstructorState& aState,
                aTag == nsGkAtoms::description) {
         if ((aTag == nsGkAtoms::label || aTag == nsGkAtoms::description) && 
             (! aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::value))) {
-          // XXX we should probably be calling ConstructBlock here to handle
-          // things like columns etc
           newFrame = NS_NewAreaFrame(mPresShell, aStyleContext,
                                      NS_BLOCK_SPACE_MGR | NS_BLOCK_MARGIN_ROOT);
         }
@@ -5841,6 +5868,9 @@ nsCSSFrameConstructor::ConstructXULFrame(nsFrameConstructorState& aState,
       // SCROLLBAR CONSTRUCTION
       else if (aTag == nsGkAtoms::scrollbar) {
         newFrame = NS_NewScrollbarFrame(mPresShell, aStyleContext);
+      }
+      else if (aTag == nsGkAtoms::nativescrollbar) {
+        newFrame = NS_NewNativeScrollbarFrame(mPresShell, aStyleContext);
       }
       // End of SCROLLBAR CONSTRUCTION logic
 
@@ -6092,15 +6122,6 @@ nsCSSFrameConstructor::ConstructXULFrame(nsFrameConstructorState& aState,
     }
 #endif
 
-    // If the new frame isn't a float containing block, then push a null
-    // float containing block to disable floats. This is needed to disable
-    // floats within XUL frames.
-    nsFrameConstructorSaveState floatSaveState;
-    PRBool isFloatContainingBlock =
-      newFrame->GetContentInsertionFrame()->IsFloatContainingBlock();
-    aState.PushFloatContainingBlock(isFloatContainingBlock ? newFrame : nsnull,
-                                    floatSaveState, PR_FALSE, PR_FALSE);
-
     // Process the child content if requested
     nsFrameItems childItems;
     if (!newFrame->IsLeaf()) {
@@ -6297,7 +6318,7 @@ nsCSSFrameConstructor::ConstructFrameByDisplayType(nsFrameConstructorState& aSta
   // block-level.
   NS_ASSERTION(!(aDisplay->IsFloating() ||
                  aDisplay->IsAbsolutelyPositioned()) ||
-               aDisplay->IsBlockOutside(),
+               aDisplay->IsBlockLevel(),
                "Style system did not apply CSS2.1 section 9.7 fixups");
 
   // If this is "body", try propagating its scroll style to the viewport
@@ -7762,8 +7783,7 @@ nsCSSFrameConstructor::GetFloatContainingBlock(nsIFrame* aFrame)
   // IF we hit a mathml frame, bail out; we don't allow floating out of mathml
   // frames, because they don't seem to be able to deal.
   for (nsIFrame* containingBlock = aFrame;
-       containingBlock && !containingBlock->IsFrameOfType(nsIFrame::eMathML) &&
-       !containingBlock->IsBoxFrame();
+       containingBlock && !containingBlock->IsFrameOfType(nsIFrame::eMathML);
        containingBlock = containingBlock->GetParent()) {
     if (containingBlock->IsFloatContainingBlock()) {
       return containingBlock;
@@ -7996,7 +8016,7 @@ FindNextAnonymousSibling(nsIPresShell* aPresShell,
 // frame tree.
 PRBool
 nsCSSFrameConstructor::IsValidSibling(nsIFrame*              aParentFrame,
-                                      nsIFrame*              aSibling,
+                                      const nsIFrame&        aSibling,
                                       PRUint8                aSiblingDisplay,
                                       nsIContent&            aContent,
                                       PRUint8&               aDisplay)
@@ -8010,17 +8030,7 @@ nsCSSFrameConstructor::IsValidSibling(nsIFrame*              aParentFrame,
     // if we haven't already, construct a style context to find the display type of aContent
     if (UNSET_DISPLAY == aDisplay) {
       nsRefPtr<nsStyleContext> styleContext;
-      nsIFrame* styleParent;
-      PRBool providerIsChild;
-      if (NS_FAILED(aSibling->
-                      GetParentStyleContextFrame(aSibling->PresContext(),
-                                                 &styleParent,
-                                                 &providerIsChild)) ||
-          !styleParent) {
-        NS_NOTREACHED("Shouldn't happen");
-        return PR_FALSE;
-      }
-      styleContext = ResolveStyleContext(styleParent, &aContent);
+      styleContext = ResolveStyleContext(aSibling.GetParent(), &aContent);
       if (!styleContext) return PR_FALSE;
       const nsStyleDisplay* display = styleContext->GetStyleDisplay();
       aDisplay = display->mDisplay;
@@ -8041,7 +8051,7 @@ nsCSSFrameConstructor::IsValidSibling(nsIFrame*              aParentFrame,
   }
   else if (nsGkAtoms::fieldSetFrame == aParentFrame->GetType()) {
     // Legends can be sibling of legends but not of other content in the fieldset
-    nsIAtom* sibType = aSibling->GetType();
+    nsIAtom* sibType = aSibling.GetType();
     nsCOMPtr<nsIDOMHTMLLegendElement> legendContent(do_QueryInterface(&aContent));
 
     if ((legendContent  && (nsGkAtoms::legendFrame != sibType)) ||
@@ -8090,7 +8100,7 @@ nsCSSFrameConstructor::FindPreviousSibling(nsIContent*       aContainer,
       // placeholder for out-of-flows?
       const nsStyleDisplay* display = prevSibling->GetStyleDisplay();
   
-      if (aChild && !IsValidSibling(aContainerFrame, prevSibling, 
+      if (aChild && !IsValidSibling(aContainerFrame, *prevSibling, 
                                     display->mDisplay, (nsIContent&)*aChild,
                                     childDisplay))
         continue;
@@ -8151,7 +8161,7 @@ nsCSSFrameConstructor::FindNextSibling(nsIContent*       aContainer,
       // placeholder for out-of-flows?
       const nsStyleDisplay* display = nextSibling->GetStyleDisplay();
 
-      if (aChild && !IsValidSibling(aContainerFrame, nextSibling, 
+      if (aChild && !IsValidSibling(aContainerFrame, *nextSibling, 
                                     display->mDisplay, (nsIContent&)*aChild,
                                     childDisplay))
         continue;
@@ -8436,7 +8446,7 @@ nsCSSFrameConstructor::ContentAppended(nsIContent*     aContainer,
         styleContext = ResolveStyleContext(parentFrame, child);
         // XXX since the block child goes in the last inline of the sacred triad, frames would 
         // need to be moved into the 2nd triad (block) but that is more work, for now bail.
-        needReframe = styleContext->GetStyleDisplay()->IsBlockOutside();
+        needReframe = styleContext->GetStyleDisplay()->IsBlockLevel();
       }
       if (needReframe)
         return ReframeContainingBlock(parentFrame);
@@ -8470,10 +8480,11 @@ nsCSSFrameConstructor::ContentAppended(nsIContent*     aContainer,
   PRBool haveFirstLetterStyle = PR_FALSE, haveFirstLineStyle = PR_FALSE;
   nsIFrame* containingBlock = state.mFloatedItems.containingBlock;
   if (containingBlock) {
-    haveFirstLetterStyle = HasFirstLetterStyle(containingBlock);
-    haveFirstLineStyle =
-      ShouldHaveFirstLineStyle(containingBlock->GetContent(),
-                               containingBlock->GetStyleContext());
+    nsIContent* blockContent = containingBlock->GetContent();
+    nsStyleContext* blockSC = containingBlock->GetStyleContext();
+    HaveSpecialBlockStyle(blockContent, blockSC,
+                          &haveFirstLetterStyle,
+                          &haveFirstLineStyle);
   }
 
   if (haveFirstLetterStyle) {
@@ -8613,7 +8624,7 @@ nsCSSFrameConstructor::NeedSpecialFrameReframe(nsIContent*     aParent1,
 {
   // XXXbz aNextSibling is utterly unused.  Why?
   
-  if (IsBlockOutside(aParentFrame)) 
+  if (!IsInlineFrame2(aParentFrame)) 
     return PR_FALSE;
 
   // find out if aChild is a block or inline
@@ -8622,7 +8633,7 @@ nsCSSFrameConstructor::NeedSpecialFrameReframe(nsIContent*     aParent1,
     nsRefPtr<nsStyleContext> styleContext;
     styleContext = ResolveStyleContext(aParentFrame, aChild);
     const nsStyleDisplay* display = styleContext->GetStyleDisplay();
-    childIsBlock = display->IsBlockOutside();
+    childIsBlock = display->IsBlockLevel();
   }
   nsIFrame* prevParent; // parent of prev sibling
   nsIFrame* nextParent; // parent of next sibling
@@ -8631,7 +8642,7 @@ nsCSSFrameConstructor::NeedSpecialFrameReframe(nsIContent*     aParent1,
     if (aPrevSibling) {
       prevParent = aPrevSibling->GetParent(); 
       NS_ASSERTION(prevParent, "program error - null parent frame");
-      if (!IsBlockOutside(prevParent)) { // prevParent is an inline
+      if (IsInlineFrame2(prevParent)) { // prevParent is an inline
         // XXX we need to find out if prevParent is the 1st inline or the last. If it
         // is the 1st, then aChild and the frames after aPrevSibling within the 1st inline
         // need to be moved to the block(inline). If it is the last, then aChild and the
@@ -8652,7 +8663,7 @@ nsCSSFrameConstructor::NeedSpecialFrameReframe(nsIContent*     aParent1,
       if (nextSibling) {
         nextParent = nextSibling->GetParent(); 
         NS_ASSERTION(nextParent, "program error - null parent frame");
-        if (!IsBlockOutside(nextParent)) {
+        if (IsInlineFrame2(nextParent)) {
           // XXX we need to move aChild, aNextSibling and all the frames after aNextSibling within
           // the 1st inline to the block(inline).
           return PR_TRUE; // for now, bail
@@ -8666,7 +8677,7 @@ nsCSSFrameConstructor::NeedSpecialFrameReframe(nsIContent*     aParent1,
     if (aPrevSibling) {
       prevParent = aPrevSibling->GetParent(); 
       NS_ASSERTION(prevParent, "program error - null parent frame");
-      if (!IsBlockOutside(prevParent)) { // prevParent is an inline
+      if (IsInlineFrame2(prevParent)) { // prevParent is an inline
         // aChild goes into the same inline frame as aPrevSibling
         aParentFrame = aPrevSibling->GetParent();
         NS_ASSERTION(aParentFrame, "program error - null parent frame");
@@ -8684,7 +8695,7 @@ nsCSSFrameConstructor::NeedSpecialFrameReframe(nsIContent*     aParent1,
         if (nextSibling) {
           nextParent = nextSibling->GetParent();
           NS_ASSERTION(nextParent, "program error - null parent frame");
-          if (!IsBlockOutside(nextParent)) {
+          if (IsInlineFrame2(nextParent)) {
             // nextParent is the ending inline frame. Put aChild there and
             // set aPrevSibling to null so aChild is its first element.
             aParentFrame = nextSibling->GetParent(); 
@@ -8998,10 +9009,11 @@ nsCSSFrameConstructor::ContentInserted(nsIContent*            aContainer,
       (NS_STYLE_DISPLAY_INLINE_BLOCK == parentDisplay->mDisplay)) {
     // Recover the special style flags for the containing block
     if (containingBlock) {
-      haveFirstLetterStyle = HasFirstLetterStyle(containingBlock);
-      haveFirstLineStyle =
-        ShouldHaveFirstLineStyle(containingBlock->GetContent(),
-                                 containingBlock->GetStyleContext());
+      blockSC = containingBlock->GetStyleContext();
+      blockContent = containingBlock->GetContent();
+      HaveSpecialBlockStyle(blockContent, blockSC,
+                            &haveFirstLetterStyle,
+                            &haveFirstLineStyle);
     }
 
     if (haveFirstLetterStyle) {
@@ -9232,8 +9244,8 @@ nsCSSFrameConstructor::ReinsertContent(nsIContent*     aContainer,
  * 1. For each frame in the subtree, we remove the mapping from the
  *    content object to its frame
  *
- * 2. For child frames that have been moved out of the flow, we enqueue
- *    the out-of-flow frame for deletion *if* the out-of-flow frame's
+ * 2. For child frames that have been moved out of the flow, we
+ *    enqueue the out-of-frame for deletion *if* the out-of-flow frame's
  *    geometric parent is not in |aRemovedFrame|'s hierarchy (e.g., an
  *    absolutely positioned element that has been promoted to be a direct
  *    descendant of an area frame).
@@ -9460,7 +9472,7 @@ nsCSSFrameConstructor::ContentRemoved(nsIContent*     aContainer,
     // Examine the containing-block for the removed content and see if
     // :first-letter style applies.
     nsIFrame* containingBlock = GetFloatContainingBlock(parentFrame);
-    PRBool haveFLS = containingBlock && HasFirstLetterStyle(containingBlock);
+    PRBool haveFLS = containingBlock && HaveFirstLetterStyle(containingBlock);
     if (haveFLS) {
       // Trap out to special routine that handles adjusting a blocks
       // frame tree when first-letter style is present.
@@ -9771,7 +9783,8 @@ InvalidateCanvasIfNeeded(nsIFrame* aFrame)
 }
 
 nsresult
-nsCSSFrameConstructor::StyleChangeReflow(nsIFrame* aFrame)
+nsCSSFrameConstructor::StyleChangeReflow(nsIFrame* aFrame,
+                                         nsIAtom* aAttribute)
 {
   // If the frame hasn't even received an initial reflow, then don't
   // send it a style-change reflow!
@@ -9793,8 +9806,8 @@ nsCSSFrameConstructor::StyleChangeReflow(nsIFrame* aFrame)
   if (IsFrameSpecial(aFrame))
     aFrame = GetIBContainingBlockFor(aFrame);
 
-  mPresShell->FrameNeedsReflow(aFrame, nsIPresShell::eStyleChange,
-                               NS_FRAME_IS_DIRTY);
+  aFrame->AddStateBits(NS_FRAME_IS_DIRTY);
+  mPresShell->FrameNeedsReflow(aFrame, nsIPresShell::eStyleChange);
 
   return NS_OK;
 }
@@ -9837,7 +9850,7 @@ nsCSSFrameConstructor::CharacterDataChanged(nsIContent* aContent,
       // See if the block has first-letter style applied to it.
       nsIContent* blockContent = block->GetContent();
       nsStyleContext* blockSC = block->GetStyleContext();
-      haveFirstLetterStyle = HasFirstLetterStyle(block);
+      haveFirstLetterStyle = HaveFirstLetterStyle(block);
       if (haveFirstLetterStyle) {
         RemoveLetterFrames(mPresShell->GetPresContext(), mPresShell,
                            mPresShell->FrameManager(), block);
@@ -9908,7 +9921,7 @@ nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
     } else {
       NS_ASSERTION(frame, "This shouldn't happen");
       if (hint & nsChangeHint_ReflowFrame) {
-        StyleChangeReflow(frame);
+        StyleChangeReflow(frame, nsnull);
       }
       if (hint & (nsChangeHint_RepaintFrame | nsChangeHint_SyncFrameView)) {
         ApplyRenderingChangeToTree(mPresShell->GetPresContext(), frame, hint);
@@ -11076,7 +11089,7 @@ nsCSSFrameConstructor::RecreateFramesForContent(nsIContent* aContent)
     // possibly have caused the splitting, and if the inline is changing to a
     // block, any reframing that's needed will happen in ContentInserted.
     if (MaybeRecreateContainerForIBSplitterFrame(frame, &rv) ||
-        (!IsInlineOutside(frame) &&
+        (!IsInlineFrame(frame) &&
          MaybeRecreateContainerForIBSplitterFrame(frame->GetParent(), &rv)))
       return rv;
   }
@@ -11159,8 +11172,8 @@ nsCSSFrameConstructor::GetFirstLineStyle(nsIContent* aContent,
 // Predicate to see if a given content (block element) has
 // first-letter style applied to it.
 PRBool
-nsCSSFrameConstructor::ShouldHaveFirstLetterStyle(nsIContent* aContent,
-                                                  nsStyleContext* aStyleContext)
+nsCSSFrameConstructor::HaveFirstLetterStyle(nsIContent* aContent,
+                                            nsStyleContext* aStyleContext)
 {
   return nsLayoutUtils::HasPseudoStyle(aContent, aStyleContext,
                                        nsCSSPseudoElements::firstLetter,
@@ -11168,7 +11181,7 @@ nsCSSFrameConstructor::ShouldHaveFirstLetterStyle(nsIContent* aContent,
 }
 
 PRBool
-nsCSSFrameConstructor::HasFirstLetterStyle(nsIFrame* aBlockFrame)
+nsCSSFrameConstructor::HaveFirstLetterStyle(nsIFrame* aBlockFrame)
 {
   NS_PRECONDITION(aBlockFrame, "Need a frame");
   
@@ -11184,8 +11197,8 @@ nsCSSFrameConstructor::HasFirstLetterStyle(nsIFrame* aBlockFrame)
 }
 
 PRBool
-nsCSSFrameConstructor::ShouldHaveFirstLineStyle(nsIContent* aContent,
-                                                nsStyleContext* aStyleContext)
+nsCSSFrameConstructor::HaveFirstLineStyle(nsIContent* aContent,
+                                          nsStyleContext* aStyleContext)
 {
   return nsLayoutUtils::HasPseudoStyle(aContent, aStyleContext,
                                        nsCSSPseudoElements::firstLine,
@@ -11193,15 +11206,15 @@ nsCSSFrameConstructor::ShouldHaveFirstLineStyle(nsIContent* aContent,
 }
 
 void
-nsCSSFrameConstructor::ShouldHaveSpecialBlockStyle(nsIContent* aContent,
-                                                   nsStyleContext* aStyleContext,
-                                                   PRBool* aHaveFirstLetterStyle,
-                                                   PRBool* aHaveFirstLineStyle)
+nsCSSFrameConstructor::HaveSpecialBlockStyle(nsIContent* aContent,
+                                             nsStyleContext* aStyleContext,
+                                             PRBool* aHaveFirstLetterStyle,
+                                             PRBool* aHaveFirstLineStyle)
 {
   *aHaveFirstLetterStyle =
-    ShouldHaveFirstLetterStyle(aContent, aStyleContext);
+    HaveFirstLetterStyle(aContent, aStyleContext);
   *aHaveFirstLineStyle =
-    ShouldHaveFirstLineStyle(aContent, aStyleContext);
+    HaveFirstLineStyle(aContent, aStyleContext);
 }
 
 /**
@@ -11325,7 +11338,7 @@ nsCSSFrameConstructor::WrapFramesInFirstLineFrame(
   nsIFrame* firstInlineFrame = nsnull;
   nsIFrame* lastInlineFrame = nsnull;
   while (kid) {
-    if (IsInlineOutside(kid)) {
+    if (IsInlineFrame(kid)) {
       if (!firstInlineFrame) firstInlineFrame = kid;
       lastInlineFrame = kid;
     }
@@ -11424,7 +11437,7 @@ nsCSSFrameConstructor::AppendFirstLineFrames(
   nsIFrame* firstInlineFrame = nsnull;
   nsIFrame* lastInlineFrame = nsnull;
   while (kid) {
-    if (IsInlineOutside(kid)) {
+    if (IsInlineFrame(kid)) {
       if (!firstInlineFrame) firstInlineFrame = kid;
       lastInlineFrame = kid;
     }
@@ -11481,7 +11494,7 @@ nsCSSFrameConstructor::InsertFirstLineFrames(
 #if 0
   nsIFrame* parentFrame = *aParentFrame;
   nsIFrame* newFrame = aFrameItems.childList;
-  PRBool isInline = IsInlineOutside(newFrame);
+  PRBool isInline = IsInlineFrame(newFrame);
 
   if (!aPrevSibling) {
     // Insertion will become the first frame. Two cases: we either
@@ -12337,8 +12350,8 @@ nsCSSFrameConstructor::ConstructBlock(nsFrameConstructorState& aState,
 
   // See if the block has first-letter style applied to it...
   PRBool haveFirstLetterStyle, haveFirstLineStyle;
-  ShouldHaveSpecialBlockStyle(aContent, aStyleContext,
-                              &haveFirstLetterStyle, &haveFirstLineStyle);
+  HaveSpecialBlockStyle(aContent, aStyleContext,
+                        &haveFirstLetterStyle, &haveFirstLineStyle);
 
   // Process the child content
   nsFrameItems childItems;
@@ -12363,7 +12376,7 @@ nsCSSFrameConstructor::AreAllKidsInline(nsIFrame* aFrameList)
 {
   nsIFrame* kid = aFrameList;
   while (kid) {
-    if (!IsInlineOutside(kid)) {
+    if (!IsInlineFrame(kid)) {
       return PR_FALSE;
     }
     kid = kid->GetNextSibling();
@@ -12610,7 +12623,7 @@ nsCSSFrameConstructor::ProcessInlineChildren(nsFrameConstructorState& aState,
         kid = aFrameItems.childList;
       }
       while (kid) {
-        if (!IsInlineOutside(kid)) {
+        if (!IsInlineFrame(kid)) {
           allKidsInline = PR_FALSE;
           break;
         }
@@ -12730,7 +12743,7 @@ nsCSSFrameConstructor::WipeContainingBlock(nsFrameConstructorState& aState,
   // pseudo-frames -- telling which ones are or are not OK to walk out of is
   // too hard (and I suspect that we do in fact need to walk out of all of
   // them).
-  while (IsFrameSpecial(aContainingBlock) || IsInlineOutside(aContainingBlock) ||
+  while (IsFrameSpecial(aContainingBlock) || IsInlineFrame(aContainingBlock) ||
          aContainingBlock->GetStyleContext()->GetPseudoType()) {
     aContainingBlock = aContainingBlock->GetParent();
     NS_ASSERTION(aContainingBlock,

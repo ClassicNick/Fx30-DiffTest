@@ -2088,7 +2088,7 @@ nscoord width, offset;
 
   // Draw all the other sides
 
-  nscoord appUnitsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
+  nscoord twipsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
 
   // default to current color in case it is invert color
   // and the platform does not support that
@@ -2115,25 +2115,25 @@ nscoord width, offset;
              outlineStyle,
              outlineColor,
              bgColor->mBackgroundColor, outside, inside, aSkipSides,
-             appUnitsPerPixel, aGap);
+             twipsPerPixel, aGap);
 
     DrawSide(aRenderingContext, NS_SIDE_LEFT,
              outlineStyle, 
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
-             appUnitsPerPixel, aGap);
+             twipsPerPixel, aGap);
 
     DrawSide(aRenderingContext, NS_SIDE_TOP,
              outlineStyle,
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
-             appUnitsPerPixel, aGap);
+             twipsPerPixel, aGap);
 
     DrawSide(aRenderingContext, NS_SIDE_RIGHT,
              outlineStyle,
              outlineColor,
              bgColor->mBackgroundColor,outside, inside,aSkipSides,
-             appUnitsPerPixel, aGap);
+             twipsPerPixel, aGap);
 #ifdef GFX_HAS_INVERT
     if(modeChanged ) {
       aRenderingContext.SetPenMode(nsPenMode_kNone);
@@ -2182,10 +2182,10 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
   DrawDashedSegments(aRenderingContext, aBorderArea, aBorderEdges, aSkipSides, aGap);
 
   // Draw all the other sides
-  nscoord appUnitsPerPixel;
+  nscoord twipsPerPixel;
   float p2t;
   p2t = aPresContext->PixelsToTwips();
-  appUnitsPerPixel = (nscoord) p2t;/* XXX huh!*/
+  twipsPerPixel = (nscoord) p2t;/* XXX huh!*/
 
   if (0 == (aSkipSides & (1<<NS_SIDE_TOP))) {
     PRInt32 segmentCount = aBorderEdges->mEdges[NS_SIDE_TOP].Count();
@@ -2208,7 +2208,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside,aSkipSides,
-               appUnitsPerPixel, aGap);
+               twipsPerPixel, aGap);
     }
   }
   if (0 == (aSkipSides & (1<<NS_SIDE_LEFT))) {
@@ -2230,7 +2230,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside, aSkipSides,
-               appUnitsPerPixel, aGap);
+               twipsPerPixel, aGap);
     }
   }
   if (0 == (aSkipSides & (1<<NS_SIDE_BOTTOM))) {
@@ -2255,7 +2255,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside,aSkipSides,
-               appUnitsPerPixel, aGap);
+               twipsPerPixel, aGap);
     }
   }
   if (0 == (aSkipSides & (1<<NS_SIDE_RIGHT))) {
@@ -2287,7 +2287,7 @@ void nsCSSRendering::PaintBorderEdges(nsPresContext* aPresContext,
                borderEdge->mColor,
                bgColor->mBackgroundColor,
                inside, outside,aSkipSides,
-               appUnitsPerPixel, aGap);
+               twipsPerPixel, aGap);
     }
   }
 }
@@ -2860,7 +2860,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
   image->GetHeight(&imageSize.height);
 
   float p2t;
-  p2t = aPresContext->ScaledPixelsToTwips();
+  p2t = aPresContext->PixelsToTwips();
   imageSize.width = NSIntPixelsToTwips(imageSize.width, p2t);
   imageSize.height = NSIntPixelsToTwips(imageSize.height, p2t);
 
@@ -3197,7 +3197,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsPresContext* aPresContext,
     if (sourceRect.XMost() <= tileWidth && sourceRect.YMost() <= tileHeight) {
       // The entire drawRect is contained inside a single tile; just
       // draw the corresponding part of the image once.
-      aRenderingContext.DrawImage(image, absTileRect, drawRect);
+      aRenderingContext.DrawImage(image, sourceRect, drawRect);
     } else {
       aRenderingContext.DrawTile(image, absTileRect.x, absTileRect.y, &drawRect);
     }
@@ -3311,12 +3311,9 @@ nsCSSRendering::PaintRoundedBackground(nsPresContext* aPresContext,
   nsFloatPoint  thePath[MAXPATHSIZE];
   static nsPoint       polyPath[MAXPOLYPATHSIZE];
   PRInt16       np;
-  nscoord       appUnitsPerPixel;
-  float         p2t;
 
   // needed for our border thickness
-  p2t = aPresContext->PixelsToTwips();
-  appUnitsPerPixel = NSToCoordRound(p2t);
+  nscoord twipsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
 
   nscolor color = aColor.mBackgroundColor;
   if (!aCanPaintNonWhite) {
@@ -3338,7 +3335,7 @@ nsCSSRendering::PaintRoundedBackground(nsPresContext* aPresContext,
 
   // set the rounded rect up, and let'er rip
   outerPath.Set(aBgClipArea.x, aBgClipArea.y, aBgClipArea.width,
-                aBgClipArea.height, aTheRadius, appUnitsPerPixel);
+                aBgClipArea.height, aTheRadius, twipsPerPixel);
   outerPath.GetRoundedBorders(UL,UR,LL,LR);
 
   // BUILD THE ENTIRE OUTSIDE PATH
@@ -3420,8 +3417,6 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
   nsFloatPoint  thePath[MAXPATHSIZE];
   PRInt16       np;
   nsMargin      border;
-  nscoord       appUnitsPerPixel,quarterPixel;
-  float         p2t;
 
   NS_ASSERTION((aIsOutline && aOutlineStyle) || (!aIsOutline && aBorderStyle), "null params not allowed");
   if (!aIsOutline) {
@@ -3442,14 +3437,11 @@ nsCSSRendering::PaintRoundedBorder(nsPresContext* aPresContext,
   }
 
   // needed for our border thickness
-  appUnitsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
-
-  // Base our thickness check on the segment being less than a pixel and 1/2
-  quarterPixel = appUnitsPerPixel >> 2;
-  //qtwips = twipsPerPixel;
+  nscoord twipsPerPixel = NSIntPixelsToTwips(1, aPresContext->PixelsToTwips());
+  nscoord quarterPixel = twipsPerPixel / 4;
 
   outerPath.Set(aBorderArea.x, aBorderArea.y, aBorderArea.width,
-                aBorderArea.height, aBorderRadius, appUnitsPerPixel);
+                aBorderArea.height, aBorderRadius, twipsPerPixel);
   outerPath.GetRoundedBorders(UL,UR,LL,LR);
   outerPath.CalcInsetCurves(IUL,IUR,ILL,ILR,border);
 
@@ -4205,7 +4197,7 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
                                        nscolor                  aBorderColor,
                                        const nsStyleBackground* aBGColor,
                                        const nsRect&            aBorder,
-                                       float                  aPixelsToTwips,
+                                       PRInt32                  aAppUnitsPerCSSPixel,
                                        PRUint8                  aStartBevelSide,
                                        nscoord                  aStartBevelOffset,
                                        PRUint8                  aEndBevelSide,
@@ -4214,7 +4206,7 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
   aContext.SetColor (aBorderColor); 
 
   PRBool horizontal = ((NS_SIDE_TOP == aStartBevelSide) || (NS_SIDE_BOTTOM == aStartBevelSide));
-  nscoord twipsPerPixel = NSIntPixelsToTwips(1, aPixelsToTwips);
+  nscoord twipsPerPixel = NSIntPixelsToTwips(1, aAppUnitsPerCSSPixel);
   PRBool ridgeGroove = NS_STYLE_BORDER_STYLE_RIDGE;
 
   if ((twipsPerPixel >= aBorder.width) || (twipsPerPixel >= aBorder.height) ||

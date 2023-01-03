@@ -48,7 +48,6 @@
 #include "nsIPresShell.h"
 #include "nsRect.h"
 #include "nsIDeviceContext.h"
-#include "nsHashtable.h"
 #include "nsFont.h"
 #include "nsIWeakReference.h"
 #include "nsITheme.h"
@@ -60,6 +59,8 @@
 #include "nsPropertyTable.h"
 #include "nsGkAtoms.h"
 #include "nsIDocument.h"
+#include "nsInterfaceHashtable.h"
+class nsImageLoader;
 #ifdef IBMBIDI
 class nsBidiPresUtils;
 #endif // IBMBIDI
@@ -425,6 +426,42 @@ public:
     { mIsRootPaginatedDocument = aIsRootPaginatedDocument; }
 
   /**
+  * Get/set the print scaling level; used by nsPageFrame to scale up
+  * pages.  Set safe to call before reflow, get guaranteed to be set
+  * properly after reflow.
+  */
+
+  float GetPageScale() { return mPageScale; }
+  void SetPageScale(float aScale) { mPageScale = aScale; }
+
+  /**
+  * Get/set the scaling facor to use when rendering the pages for print preview.
+  * Only safe to get after print preview set up; safe to set anytime.
+  * This is a scaling factor for the display of the print preview.  It
+  * does not affect layout.  It only affects the size of the onscreen pages
+  * in print preview.
+  * XXX Temporary: see http://wiki.mozilla.org/Gecko:PrintPreview
+  */
+  float GetPrintPreviewScale() { return mPPScale; }
+  void SetPrintPreviewScale(float aScale) { mPPScale = aScale; }
+
+  nsIDeviceContext* DeviceContext() { return mDeviceContext; }
+  nsIEventStateManager* EventStateManager() { return mEventManager; }
+  nsIAtom* GetLangGroup() { return mLangGroup; }
+
+  float TextZoom() { return mTextZoom; }
+  void SetTextZoomInternal(float aZoom) {
+    mTextZoom = aZoom;
+    ClearStyleDataAndReflow();
+  }
+  virtual NS_HIDDEN_(void) SetTextZoomExternal(float aZoom);
+#ifdef _IMPL_NS_LAYOUT
+  void SetTextZoom(float aZoom) { SetTextZoomInternal(aZoom); }
+#else
+  void SetTextZoom(float aZoom) { SetTextZoomExternal(aZoom); }
+#endif
+
+  /**
    * Conversion from device pixels to twips.
    * WARNING: The misuse of this function to convert CSS pixels to twips 
    * will cause problems during printing
@@ -448,24 +485,6 @@ public:
 
   /* Set whether twip scaling is used */
   void SetScalingOfTwips(PRBool aOn) { mDoScaledTwips = aOn; }
-
-  nsIDeviceContext* DeviceContext() { return mDeviceContext; }
-  nsIEventStateManager* EventStateManager() { return mEventManager; }
-  nsIAtom* GetLangGroup() { return mLangGroup; }
-
-  float TextZoom() { return mTextZoom; }
-  void SetTextZoomInternal(float aZoom) {
-    mTextZoom = aZoom;
-    ClearStyleDataAndReflow();
-  }
-  virtual NS_HIDDEN_(void) SetTextZoomExternal(float aZoom);
-#ifdef _IMPL_NS_LAYOUT
-  void SetTextZoom(float aZoom) { SetTextZoomInternal(aZoom); }
-#else
-  void SetTextZoom(float aZoom) { SetTextZoomExternal(aZoom); }
-#endif
-
-
 
   /**
    * Get the language-specific transform type for the current document.
@@ -659,10 +678,10 @@ public:
    */
   const nscoord* GetBorderWidthTable() { return mBorderWidthTable; }
 
-  PRBool IsDynamic() { return (mType == eContext_PageLayout || mType == eContext_Galley); };
+  PRBool IsDynamic() { return (mType == eContext_PageLayout || mType == eContext_Galley); }
   PRBool IsScreen() { return (mMedium == nsGkAtoms::screen ||
                               mType == eContext_PageLayout ||
-                              mType == eContext_PrintPreview); };
+                              mType == eContext_PrintPreview); }
 
   const nsTArray<nsIFrame*>& GetActivePopups() {
     NS_ASSERTION(this == RootPresContext(), "Only on root prescontext");
@@ -720,7 +739,7 @@ protected:
   nsILinkHandler*       mLinkHandler;   // [WEAK]
   nsIAtom*              mLangGroup;     // [STRONG]
 
-  nsSupportsHashtable   mImageLoaders;
+  nsInterfaceHashtable<nsVoidPtrHashKey, nsImageLoader> mImageLoaders;
   nsWeakPtr             mContainer;
 
   // Only used in the root prescontext (this->RootPresContext() == this)
@@ -747,6 +766,8 @@ protected:
 
   nsRect                mVisibleArea;
   nsSize                mPageSize;
+  float                 mPageScale;
+  float                 mPPScale;
 
   nscolor               mDefaultColor;
   nscolor               mBackgroundColor;

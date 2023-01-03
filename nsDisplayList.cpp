@@ -51,6 +51,11 @@
 #include "nsIBlender.h"
 #include "nsTransform2D.h"
 #include "nsFrameManager.h"
+#include "nsPlaceholderFrame.h"
+
+#ifdef MOZ_CAIRO_GFX
+#include "gfxContext.h"
+#endif
 
 nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
     PRBool aIsForEvents, PRBool aBuildCaret, nsIFrame* aMovingFrame)
@@ -293,7 +298,6 @@ void nsDisplayList::Paint(nsDisplayListBuilder* aBuilder, nsIRenderingContext* a
   for (nsDisplayItem* i = GetBottom(); i != nsnull; i = i->GetAbove()) {
     i->Paint(aBuilder, aCtx, aDirtyRect);
   }
-  nsCSSRendering::DidPaint();
 }
 
 PRUint32 nsDisplayList::Count() const {
@@ -460,6 +464,35 @@ void nsDisplayList::Sort(nsDisplayListBuilder* aBuilder,
   ::Sort(this, Count(), aCmp, aClosure);
 }
 
+static PRBool
+NonZeroStyleCoord(const nsStyleCoord& aCoord) {
+  switch (aCoord.GetUnit()) {
+  case eStyleUnit_Percent:
+    return aCoord.GetPercentValue() > 0;
+  case eStyleUnit_Coord:
+    return aCoord.GetCoordValue() > 0;
+  case eStyleUnit_Null:
+    return PR_FALSE;
+  default:
+    return PR_TRUE;
+  }
+}
+
+static PRBool
+HasNonZeroSide(const nsStyleSides& aSides) {
+  nsStyleCoord coord;
+  aSides.GetTop(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;    
+  aSides.GetRight(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;    
+  aSides.GetBottom(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;    
+  aSides.GetLeft(coord);
+  if (NonZeroStyleCoord(coord)) return PR_TRUE;    
+
+  return PR_FALSE;
+}
+
 PRBool
 nsDisplayBackground::IsOpaque(nsDisplayListBuilder* aBuilder) {
   // theme background overrides any other background
@@ -472,7 +505,7 @@ nsDisplayBackground::IsOpaque(nsDisplayListBuilder* aBuilder) {
     nsCSSRendering::FindBackground(mFrame->PresContext(), mFrame, &bg, &isCanvas);
   if (!hasBG || (bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) ||
       bg->mBackgroundClip != NS_STYLE_BG_CLIP_BORDER ||
-      nsLayoutUtils::HasNonZeroSide(mFrame->GetStyleBorder()->mBorderRadius) ||
+      HasNonZeroSide(mFrame->GetStyleBorder()->mBorderRadius) ||
       NS_GET_A(bg->mBackgroundColor) < 255)
     return PR_FALSE;
   return PR_TRUE;
@@ -491,7 +524,7 @@ nsDisplayBackground::IsUniform(nsDisplayListBuilder* aBuilder) {
   if (!hasBG)
     return PR_TRUE;
   if ((bg->mBackgroundFlags & NS_STYLE_BG_IMAGE_NONE) &&
-      !nsLayoutUtils::HasNonZeroSide(mFrame->GetStyleBorder()->mBorderRadius) &&
+      !HasNonZeroSide(mFrame->GetStyleBorder()->mBorderRadius) &&
       bg->mBackgroundClip == NS_STYLE_BG_CLIP_BORDER)
     return PR_TRUE;
   return PR_FALSE;
@@ -560,7 +593,7 @@ nsDisplayOutline::OptimizeVisibility(nsDisplayListBuilder* aBuilder,
   const nsStyleOutline* outline = mFrame->GetStyleOutline();
   nsPoint origin = aBuilder->ToReferenceFrame(mFrame);
   if (nsRect(origin, mFrame->GetSize()).Contains(aVisibleRegion->GetBounds()) &&
-      !nsLayoutUtils::HasNonZeroSide(outline->mOutlineRadius)) {
+      !HasNonZeroSide(outline->mOutlineRadius)) {
     nscoord outlineOffset;
     outline->GetOutlineOffset(outlineOffset);
     if (outlineOffset >= 0) {
@@ -592,7 +625,7 @@ nsDisplayBorder::OptimizeVisibility(nsDisplayListBuilder* aBuilder,
   nsRect contentRect = GetBounds(aBuilder);
   contentRect.Deflate(border->GetBorder());
   if (contentRect.Contains(aVisibleRegion->GetBounds()) &&
-      !nsLayoutUtils::HasNonZeroSide(border->mBorderRadius)) {
+      !HasNonZeroSide(border->mBorderRadius)) {
     // the visible region is entirely inside the content rect, and no part
     // of the border is rendered inside the content rect, so we are not
     // visible
