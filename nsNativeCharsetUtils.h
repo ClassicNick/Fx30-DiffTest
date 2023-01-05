@@ -51,6 +51,12 @@
  *                                                                           *
 \*****************************************************************************/
 
+NS_COM PRInt32 NS_ConvertAtoW(const char *aStrInA, int aBufferSize, 
+                              PRUnichar *aStrOutW);
+// For path names, the default char cannot be '?', so we use '_' instead.
+NS_COM PRInt32 NS_ConvertWtoA(const PRUnichar *aStrInW, int aBufferSizeOut,
+                              char *aStrOutA, const char *aDefault="_");
+							  
 /**
  * thread-safe conversion routines that do not depend on uconv libraries.
  */
