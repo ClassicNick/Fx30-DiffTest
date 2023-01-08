@@ -181,7 +181,7 @@ public:
       CallQueryInterface(mWeakFrame.GetFrame(), &imenu);
       if (imenu) {
         nsMenuFrame* menu = NS_STATIC_CAST(nsMenuFrame*, imenu);
-        menu->UpdateMenuType(menu->GetPresContext());
+        menu->UpdateMenuType(menu->PresContext());
         shouldFlush = PR_TRUE;
       }
     }
@@ -249,7 +249,7 @@ nsMenuFrame::Init(nsIContent*      aContent,
   BuildAcceleratorText();
   nsIReflowCallback* cb = new nsASyncMenuInitialization(this);
   NS_ENSURE_TRUE(cb, NS_ERROR_OUT_OF_MEMORY);
-  GetPresContext()->PresShell()->PostReflowCallback(cb);
+  PresContext()->PresShell()->PostReflowCallback(cb);
   return rv;
 }
 
@@ -373,7 +373,7 @@ nsMenuFrame::Destroy()
 
   UngenerateMenu();
   ENSURE_TRUE(weakFrame.IsAlive());
-  DestroyPopupFrames(GetPresContext());
+  DestroyPopupFrames(PresContext());
   nsBoxFrame::Destroy();
 }
 
@@ -719,7 +719,7 @@ nsMenuFrame::ActivateMenu(PRBool aActivateFlag)
 
       viewManager->UpdateView(view, rect, NS_VMREFRESH_IMMEDIATE);
       viewManager->SetViewVisibility(view, nsViewVisibility_kShow);
-      GetPresContext()->RootPresContext()->NotifyAddedActivePopupToTop(menuPopup);
+      PresContext()->RootPresContext()->NotifyAddedActivePopupToTop(menuPopup);
   } else {
     if (mMenuOpen) {
       nsWeakFrame weakFrame(this);
@@ -738,7 +738,7 @@ nsMenuFrame::ActivateMenu(PRBool aActivateFlag)
     }
     // set here so hide chain can close the menu as well.
     mMenuOpen = PR_FALSE;
-    GetPresContext()->RootPresContext()->NotifyRemovedActivePopup(menuPopup);
+    PresContext()->RootPresContext()->NotifyRemovedActivePopup(menuPopup);
   }
   
   return NS_OK;
@@ -753,7 +753,7 @@ nsMenuFrame::AttributeChanged(PRInt32 aNameSpaceID,
 
   if (aAttribute == nsGkAtoms::checked) {
     if (mType != eMenuType_Normal)
-        UpdateMenuSpecialState(GetPresContext());
+        UpdateMenuSpecialState(PresContext());
   } else if (aAttribute == nsGkAtoms::acceltext) {
     // someone reset the accelText attribute, so clear the bit that says *we* set it
     AddStateBits(NS_STATE_ACCELTEXT_IS_DERIVED);
@@ -761,7 +761,7 @@ nsMenuFrame::AttributeChanged(PRInt32 aNameSpaceID,
   } else if (aAttribute == nsGkAtoms::key) {
     BuildAcceleratorText();
   } else if ( aAttribute == nsGkAtoms::type || aAttribute == nsGkAtoms::name )
-    UpdateMenuType(GetPresContext());
+    UpdateMenuType(PresContext());
 
   return NS_OK;
 }
@@ -801,7 +801,7 @@ nsMenuFrame::OpenMenuInternal(PRBool aActivateFlag)
   if (!mIsMenu)
     return;
 
-  nsPresContext* presContext = GetPresContext();
+  nsPresContext* presContext = PresContext();
   nsWeakFrame weakFrame(this);
 
   if (aActivateFlag) {
@@ -884,7 +884,7 @@ nsMenuFrame::OpenMenuInternal(PRBool aActivateFlag)
       {
          menuPopup->AddStateBits(NS_FRAME_IS_DIRTY);
          presContext->PresShell()->
-           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange, nsnull);
+           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange);
          presContext->PresShell()->FlushPendingNotifications(Flush_OnlyReflow);
       }
 
@@ -905,7 +905,7 @@ nsMenuFrame::OpenMenuInternal(PRBool aActivateFlag)
       {
          menuPopup->AddStateBits(NS_FRAME_IS_DIRTY);
          presContext->PresShell()->
-           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange, nsnull);
+           FrameNeedsReflow(menuPopup, nsIPresShell::eStyleChange);
          presContext->PresShell()->FlushPendingNotifications(Flush_OnlyReflow);
       }
 
@@ -1696,7 +1696,7 @@ nsMenuFrame::Execute(nsGUIEvent *aEvent)
   // important below.  We want the pres shell to get released before the
   // associated view manager on exit from this function.
   // See bug 54233.
-  nsPresContext* presContext = GetPresContext();
+  nsPresContext* presContext = PresContext();
   nsCOMPtr<nsIViewManager> kungFuDeathGrip = presContext->GetViewManager();
   nsCOMPtr<nsIPresShell> shell = presContext->GetPresShell();
   if (shell) {
@@ -1726,7 +1726,7 @@ nsMenuFrame::OnCreate()
   
   nsresult rv = NS_OK;
 
-  nsIPresShell *shell = GetPresContext()->GetPresShell();
+  nsCOMPtr<nsIPresShell> shell = PresContext()->GetPresShell();
   if (shell) {
     if (child) {
       rv = shell->HandleDOMEventWithTarget(child, &event, &status);
@@ -1734,7 +1734,6 @@ nsMenuFrame::OnCreate()
     else {
       rv = shell->HandleDOMEventWithTarget(mContent, &event, &status);
     }
-    // shell may no longer be alive, don't use it here unless you keep a ref
   }
 
   if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
@@ -1800,7 +1799,7 @@ nsMenuFrame::OnCreated()
   GetMenuChildrenElement(getter_AddRefs(child));
   
   nsresult rv = NS_OK;
-  nsIPresShell *shell = GetPresContext()->GetPresShell();
+  nsCOMPtr<nsIPresShell> shell = PresContext()->GetPresShell();
   if (shell) {
     if (child) {
       rv = shell->HandleDOMEventWithTarget(child, &event, &status);
@@ -1808,7 +1807,6 @@ nsMenuFrame::OnCreated()
     else {
       rv = shell->HandleDOMEventWithTarget(mContent, &event, &status);
     }
-    // shell may no longer be alive, don't use it here unless you keep a ref
   }
 
   if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
@@ -1827,7 +1825,7 @@ nsMenuFrame::OnDestroy()
   GetMenuChildrenElement(getter_AddRefs(child));
   
   nsresult rv = NS_OK;
-  nsIPresShell *shell = GetPresContext()->GetPresShell();
+  nsCOMPtr<nsIPresShell> shell = PresContext()->GetPresShell();
   if (shell) {
     if (child) {
       rv = shell->HandleDOMEventWithTarget(child, &event, &status);
@@ -1835,7 +1833,6 @@ nsMenuFrame::OnDestroy()
     else {
       rv = shell->HandleDOMEventWithTarget(mContent, &event, &status);
     }
-    // shell may no longer be alive, don't use it here unless you keep a ref
   }
 
   if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
@@ -1854,7 +1851,7 @@ nsMenuFrame::OnDestroyed()
   GetMenuChildrenElement(getter_AddRefs(child));
   
   nsresult rv = NS_OK;
-  nsIPresShell *shell = GetPresContext()->GetPresShell();
+  nsCOMPtr<nsIPresShell> shell = PresContext()->GetPresShell();
   if (shell) {
     if (child) {
       rv = shell->HandleDOMEventWithTarget(child, &event, &status);
@@ -1862,7 +1859,6 @@ nsMenuFrame::OnDestroyed()
     else {
       rv = shell->HandleDOMEventWithTarget(mContent, &event, &status);
     }
-    // shell may no longer be alive, don't use it here unless you keep a ref
   }
 
   if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
@@ -1880,8 +1876,8 @@ nsMenuFrame::RemoveFrame(nsIAtom*        aListName,
     // Go ahead and remove this frame.
     mPopupFrames.DestroyFrame(aOldFrame);
     AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
-    GetPresContext()->PresShell()->
-      FrameNeedsReflow(this, nsIPresShell::eTreeChange, nsnull);
+    PresContext()->PresShell()->
+      FrameNeedsReflow(this, nsIPresShell::eTreeChange);
     rv = NS_OK;
   } else {
     rv = nsBoxFrame::RemoveFrame(aListName, aOldFrame);
@@ -1907,8 +1903,8 @@ nsMenuFrame::InsertFrames(nsIAtom*        aListName,
     SetDebug(state, aFrameList, mState & NS_STATE_CURRENTLY_IN_DEBUG);
 #endif
     AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
-    GetPresContext()->PresShell()->
-      FrameNeedsReflow(this, nsIPresShell::eTreeChange, nsnull);
+    PresContext()->PresShell()->
+      FrameNeedsReflow(this, nsIPresShell::eTreeChange);
     rv = NS_OK;
   } else {
     rv = nsBoxFrame::InsertFrames(aListName, aPrevFrame, aFrameList);  
@@ -1936,8 +1932,8 @@ nsMenuFrame::AppendFrames(nsIAtom*        aListName,
     SetDebug(state, aFrameList, mState & NS_STATE_CURRENTLY_IN_DEBUG);
 #endif
     AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
-    GetPresContext()->PresShell()->
-      FrameNeedsReflow(this, nsIPresShell::eTreeChange, nsnull);
+    PresContext()->PresShell()->
+      FrameNeedsReflow(this, nsIPresShell::eTreeChange);
     rv = NS_OK;
   } else {
     rv = nsBoxFrame::AppendFrames(aListName, aFrameList); 
@@ -1963,7 +1959,7 @@ public:
     PRBool shouldFlush = PR_FALSE;
     nsIFrame* frame = mWeakFrame.GetFrame();
     if (frame) {
-      nsBoxLayoutState state(frame->GetPresContext());
+      nsBoxLayoutState state(frame->PresContext());
       if (!frame->IsCollapsed(state)) {
         nsIMenuFrame* imenu = nsnull;
         CallQueryInterface(frame, &imenu);
@@ -2000,7 +1996,7 @@ nsMenuFrame::SizeToPopup(nsBoxLayoutState& aState, nsSize& aSize)
                                              nsGkAtoms::menugenerated)) {
           nsIReflowCallback* cb = new nsASyncMenuGeneration(this);
           if (cb) {
-            GetPresContext()->PresShell()->PostReflowCallback(cb);
+            PresContext()->PresShell()->PostReflowCallback(cb);
           }
         }
         return PR_FALSE;
@@ -2077,7 +2073,7 @@ nsMenuFrame::SetActiveChild(nsIDOMElement* aChild)
 
   nsCOMPtr<nsIContent> child(do_QueryInterface(aChild));
   
-  nsIFrame* kid = GetPresContext()->PresShell()->GetPrimaryFrameFor(child);
+  nsIFrame* kid = PresContext()->PresShell()->GetPrimaryFrameFor(child);
   if (!kid)
     return NS_ERROR_FAILURE;
   nsIMenuFrame *menuFrame;

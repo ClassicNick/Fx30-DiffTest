@@ -44,7 +44,6 @@
 #include "nsMenuPopupFrame.h"
 #include "nsGkAtoms.h"
 #include "nsIContent.h"
-#include "nsContentUtils.h"
 #include "prtypes.h"
 #include "nsIAtom.h"
 #include "nsPresContext.h"
@@ -156,14 +155,13 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
                        nsIFrame*        aPrevInFlow)
 {
   nsresult rv = nsBoxFrame::Init(aContent, aParent, aPrevInFlow);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   // Set up a mediator which can be used for callbacks on this frame.
   mTimerMediator = new nsMenuPopupTimerMediator(this);
   if (NS_UNLIKELY(!mTimerMediator))
     return NS_ERROR_OUT_OF_MEMORY;
 
-  nsPresContext* presContext = GetPresContext();
+  nsPresContext* presContext = PresContext();
 
   // lookup if we're allowed to overlap the OS bar (menubar/taskbar) from the
   // look&feel object
@@ -172,8 +170,7 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
     GetMetric(nsILookAndFeel::eMetric_MenusCanOverlapOSBar, tempBool);
   mMenuCanOverlapOSBar = tempBool;
 
-  rv = CreateViewForFrame(presContext, this, GetStyleContext(), PR_TRUE);
-  NS_ENSURE_SUCCESS(rv, rv);
+  CreateViewForFrame(presContext, this, GetStyleContext(), PR_TRUE);
 
   // Now that we've made a view, remove it and insert it at the correct
   // position in the view hierarchy (as the root view).  We do this so that we
@@ -195,7 +192,7 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
   // about that constraint.
   viewManager->SetViewFloating(ourView, PR_TRUE);
 
-  nsCOMPtr<nsISupports> cont = GetPresContext()->GetContainer();
+  nsCOMPtr<nsISupports> cont = PresContext()->GetContainer();
   nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
   PRInt32 type = -1;
   if (dsti && NS_SUCCEEDED(dsti->GetItemType(&type)) &&
@@ -222,8 +219,14 @@ nsMenuPopupFrame::CreateWidgetForView(nsIView* aView)
   widgetData.mBorderStyle = eBorderStyle_default;
   widgetData.clipSiblings = PR_TRUE;
 
-  PRBool viewHasTransparentContent = !mInContentShell &&
-                                     nsLayoutUtils::FrameHasTransparency(this);
+  PRBool isCanvas;
+  const nsStyleBackground* bg;
+  PRBool hasBG =
+    nsCSSRendering::FindBackground(PresContext(), this, &bg, &isCanvas);
+  PRBool viewHasTransparentContent = hasBG &&
+    (bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) &&
+    !GetStyleDisplay()->mAppearance && !mInContentShell;
+
   nsIContent* parentContent = GetContent()->GetParent();
   nsIAtom *tag = nsnull;
   if (parentContent)
@@ -375,7 +378,7 @@ nsMenuPopupFrame::AdjustClientXYForNestedDocuments ( nsIDOMXULDocument* inPopupD
   if ( targetAsContent ) {
     nsCOMPtr<nsIDocument> targetDocument = targetAsContent->GetDocument();
     if (targetDocument) {
-      nsIPresShell *shell = targetDocument->GetPrimaryShell();
+      nsIPresShell *shell = targetDocument->GetShellAt(0);
       if ( shell ) {
         // We might be inside a popup widget. If so, we need to use that widget and
         // not the root view's widget.
@@ -418,7 +421,6 @@ nsMenuPopupFrame::AdjustClientXYForNestedDocuments ( nsIDOMXULDocument* inPopupD
   }
   nsPoint pixelOffset ( targetDocTopLeft.x - popupDocTopLeft.x, targetDocTopLeft.y - popupDocTopLeft.y );
 
-  nsPresContext* context = GetPresContext();
   *outAdjX = inClientX + pixelOffset.x;
   *outAdjY = inClientY + pixelOffset.y;
   
@@ -750,7 +752,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
   if (!window)
     return NS_OK;
 
-	nsCOMPtr<nsIDOMScreen> screen;
+  nsCOMPtr<nsIDOMScreen> screen;
   window->GetScreen(getter_AddRefs(screen));
   PRInt32 screenWidth = 0, screenHeight = 0;
   PRInt32 screenLeft = 0, screenTop = 0;
@@ -780,6 +782,14 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
   PRInt32 screenHeightTwips = NSIntPixelsToTwips(screenHeight, p2t);
   PRInt32 screenRightTwips  = NSIntPixelsToTwips(screenRight, p2t);
   PRInt32 screenBottomTwips = NSIntPixelsToTwips(screenBottom, p2t);
+
+  nsRect rect;
+  // for content shells, clip to the client area rather than the screen area
+  if (mInContentShell) {
+    nsRect rootScreenRect = presShell->GetRootFrame()->GetScreenRect();
+    rootScreenRect.ScaleRoundIn(aPresContext->TwipsToPixels());
+    rect.IntersectRect(rect, rootScreenRect);
+  }
   
   // Recall that |xpos| and |ypos| are in the coordinate system of the parent view. In
   // order to determine the screen coordinates of where our view will end up, we
@@ -1005,7 +1015,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
     }
   }  
 
-  viewManager->MoveViewTo(view, xpos, ypos); 
+  aPresContext->GetViewManager()->MoveViewTo(view, xpos, ypos); 
 
   // Now that we've positioned the view, sync up the frame's origin.
   nsPoint frameOrigin = GetPosition();
@@ -1015,7 +1025,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
   nsBoxFrame::SetPosition(frameOrigin);
 
   if (sizedToPopup) {
-      nsBoxLayoutState state(GetPresContext());
+      nsBoxLayoutState state(PresContext());
       SetBounds(state, nsRect(mRect.x, mRect.y, parentRect.width, mRect.height));
   }
     
@@ -1025,7 +1035,7 @@ nsMenuPopupFrame::SyncViewWithFrame(nsPresContext* aPresContext,
                             nsGkAtoms::_true, eCaseMatters)) {
     nsIReflowCallback* cb = new nsASyncMenuActivation(mContent);
     NS_ENSURE_TRUE(cb, NS_ERROR_OUT_OF_MEMORY);
-    GetPresContext()->PresShell()->PostReflowCallback(cb);
+    PresContext()->PresShell()->PostReflowCallback(cb);
   }
 
   return NS_OK;
@@ -1044,7 +1054,7 @@ static void GetInsertionPoint(nsIPresShell* aShell, nsIFrame* aFrame, nsIFrame* 
 nsMenuPopupFrame::GetNextMenuItem(nsIMenuFrame* aStart)
 {
   nsIFrame* immediateParent = nsnull;
-  GetInsertionPoint(GetPresContext()->PresShell(), this, nsnull,
+  GetInsertionPoint(PresContext()->PresShell(), this, nsnull,
                     &immediateParent);
   if (!immediateParent)
     immediateParent = this;
@@ -1095,7 +1105,7 @@ nsMenuPopupFrame::GetNextMenuItem(nsIMenuFrame* aStart)
 nsMenuPopupFrame::GetPreviousMenuItem(nsIMenuFrame* aStart)
 {
   nsIFrame* immediateParent = nsnull;
-  GetInsertionPoint(GetPresContext()->PresShell(), this, nsnull,
+  GetInsertionPoint(PresContext()->PresShell(), this, nsnull,
                     &immediateParent);
   if (!immediateParent)
     immediateParent = this;
@@ -1292,7 +1302,7 @@ NS_IMETHODIMP nsMenuPopupFrame::SetCurrentMenuItem(nsIMenuFrame* aMenuItem)
       KillCloseTimer(); // Ensure we don't have another stray waiting closure.
       PRInt32 menuDelay = 300;   // ms
 
-      GetPresContext()->LookAndFeel()->
+      PresContext()->LookAndFeel()->
         GetMetric(nsILookAndFeel::eMetric_SubmenuDelay, menuDelay);
 
       // Kick off the timer.
@@ -1325,7 +1335,7 @@ nsMenuPopupFrame::Escape(PRBool& aHandledFlag)
     // Get the context menu parent.
     nsIFrame* childFrame;
     CallQueryInterface(contextMenu, &childFrame);
-    nsIPopupSetFrame* popupSetFrame = GetPopupSetFrame(GetPresContext());
+    nsIPopupSetFrame* popupSetFrame = GetPopupSetFrame(PresContext());
     if (popupSetFrame)
       // Destroy the popup.
       popupSetFrame->DestroyPopup(childFrame, PR_FALSE);
@@ -1391,7 +1401,7 @@ nsMenuPopupFrame::FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent, PRBool& doActi
 
   // Enumerate over our list of frames.
   nsIFrame* immediateParent = nsnull;
-  GetInsertionPoint(GetPresContext()->PresShell(), this, nsnull,
+  GetInsertionPoint(PresContext()->PresShell(), this, nsnull,
                     &immediateParent);
   if (!immediateParent)
     immediateParent = this;
@@ -1711,7 +1721,7 @@ nsMenuPopupFrame::HideChain()
     nsWeakFrame weakMenu(frame);
     nsIMenuFrame* menuFrame;
     if (NS_FAILED(CallQueryInterface(frame, &menuFrame))) {
-      nsIPopupSetFrame* popupSetFrame = GetPopupSetFrame(GetPresContext());
+      nsIPopupSetFrame* popupSetFrame = GetPopupSetFrame(PresContext());
       if (popupSetFrame)
         // Hide the popup.
         popupSetFrame->HidePopup(this);
@@ -1747,7 +1757,7 @@ nsMenuPopupFrame::DismissChain()
     nsIMenuFrame *menuFrame = nsnull;
     CallQueryInterface(frame, &menuFrame);
     if (!menuFrame) {
-      nsIPopupSetFrame* popupSetFrame = GetPopupSetFrame(GetPresContext());
+      nsIPopupSetFrame* popupSetFrame = GetPopupSetFrame(PresContext());
       if (popupSetFrame) {
         // make sure the menu is not highlighted
         if (mCurrentMenu) {
@@ -1802,7 +1812,7 @@ nsMenuPopupFrame::InstallKeyboardNavigator()
   if (mKeyboardNavigator)
     return NS_OK;
 
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mContent->GetDocument());
+  nsCOMPtr<nsIDOMEventReceiver> target = do_QueryInterface(mContent->GetDocument());
   
   mTarget = target;
   mKeyboardNavigator = new nsMenuListener(this);
@@ -1811,9 +1821,7 @@ nsMenuPopupFrame::InstallKeyboardNavigator()
   target->AddEventListener(NS_LITERAL_STRING("keypress"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE); 
   target->AddEventListener(NS_LITERAL_STRING("keydown"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);  
   target->AddEventListener(NS_LITERAL_STRING("keyup"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);   
-
-  nsContentUtils::NotifyInstalledMenuKeyboardListener(PR_TRUE);
-
+  
   return NS_OK;
 }
 
@@ -1826,10 +1834,8 @@ nsMenuPopupFrame::RemoveKeyboardNavigator()
   mTarget->RemoveEventListener(NS_LITERAL_STRING("keypress"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);
   mTarget->RemoveEventListener(NS_LITERAL_STRING("keydown"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);
   mTarget->RemoveEventListener(NS_LITERAL_STRING("keyup"), (nsIDOMKeyListener*)mKeyboardNavigator, PR_TRUE);
-
+  
   NS_IF_RELEASE(mKeyboardNavigator);
-
-  nsContentUtils::NotifyInstalledMenuKeyboardListener(PR_FALSE);
 
   return NS_OK;
 }
@@ -1842,7 +1848,7 @@ nsMenuPopupFrame::IsValidItem(nsIContent* aContent)
   nsIAtom *tag = aContent->Tag();
   
   PRBool skipNavigatingDisabledMenuItem;
-  GetPresContext()->LookAndFeel()->
+  PresContext()->LookAndFeel()->
     GetMetric(nsILookAndFeel::eMetric_SkipNavigatingDisabledMenuItem,
               skipNavigatingDisabledMenuItem);
 
@@ -1915,7 +1921,7 @@ nsMenuPopupFrame::Destroy()
   if (mCloseTimer)
     mCloseTimer->Cancel();
 
-  nsPresContext* rootPresContext = GetPresContext()->RootPresContext();
+  nsPresContext* rootPresContext = PresContext()->RootPresContext();
   if (rootPresContext->ContainsActivePopup(this)) {
     rootPresContext->NotifyRemovedActivePopup(this);
   }

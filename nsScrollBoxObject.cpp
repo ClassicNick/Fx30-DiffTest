@@ -89,8 +89,8 @@ NS_IMETHODIMP nsScrollBoxObject::ScrollTo(PRInt32 x, PRInt32 y)
   nsIScrollableView* scrollableView = GetScrollableView();
   if (!scrollableView)
     return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIPresShell> shell = GetPresShell(PR_FALSE);
+	
+	nsCOMPtr<nsIPresShell> shell = GetPresShell(PR_FALSE);
   if (!shell) {
     return NS_ERROR_UNEXPECTED;
   }
@@ -398,12 +398,8 @@ NS_IMETHODIMP nsScrollBoxObject::EnsureElementIsVisible(nsIDOMElement *child)
     nsIScrollableView* scrollableView = GetScrollableView();
     if (!scrollableView)
        return NS_ERROR_FAILURE;
-
-    nsIFrame* scrolledBox = GetScrolledBox(this);
-    if (!scrolledBox)
-       return NS_ERROR_FAILURE;
 	   
-	   nsIPresShell* shell = GetPresShell(PR_FALSE);
+	nsIPresShell* shell = GetPresShell(PR_FALSE);
     if (!shell) {
       return NS_ERROR_UNEXPECTED;
     }
@@ -411,6 +407,10 @@ NS_IMETHODIMP nsScrollBoxObject::EnsureElementIsVisible(nsIDOMElement *child)
     // prepare for twips
     float pixelsToTwips = 0.0;
     pixelsToTwips = shell->GetPresContext()->PixelsToTwips();
+
+    nsIFrame* scrolledBox = GetScrolledBox(this);
+    if (!scrolledBox)
+       return NS_ERROR_FAILURE;
 
     nsRect rect, crect;
     // get the twips rectangle from the boxobject (which has pixels)    

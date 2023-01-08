@@ -164,6 +164,8 @@ public:
                               nsIAtom* aAttribute,
                               PRInt32 aModType);
 
+  virtual nsresult CurrentPositionChanged(nsPresContext* aPresContext);
+
   NS_IMETHOD  Init(nsIContent*      aContent,
                    nsIFrame*        aParent,
                    nsIFrame*        asPrevInFlow);
@@ -175,8 +177,6 @@ public:
 
   NS_IMETHOD SetInitialChildList(nsIAtom*        aListName,
                                  nsIFrame*       aChildList);
-
-  virtual nsIAtom* GetType() const;
 
   NS_IMETHOD MouseDown(nsIDOMEvent* aMouseEvent);
   NS_IMETHOD MouseUp(nsIDOMEvent* aMouseEvent);
@@ -218,12 +218,8 @@ private:
   nsIBox* GetScrollbar();
 
   void PageUpDown(nscoord change);
-  void SetCurrentPosition(nsIContent* scrollbar, nscoord pos, PRBool aIsSmooth,
-                          PRBool aImmediateRedraw);
-  void SetCurrentPositionInternal(nsIContent* scrollbar, nscoord pos,
-                                  PRBool aIsSmooth, PRBool aImmediateRedraw);
-  nsresult CurrentPositionChanged(nsPresContext* aPresContext,
-                                  PRBool aImmediateRedraw);
+  void SetCurrentPosition(nsIContent* scrollbar, nscoord pos, PRBool aIsSmooth);
+  void SetCurrentPositionInternal(nsIContent* scrollbar, nscoord pos, PRBool aIsSmooth);
   void DragThumb(PRBool aGrabMouseEvents);
   void AddListener();
   void RemoveListener();
@@ -241,6 +237,8 @@ private:
   nscoord mChange;
   nsPoint mDestinationPoint;
   nsSliderMediator* mMediator;
+
+  PRPackedBool mRedrawImmediate;
 
   static PRBool gMiddlePref;
   static PRInt32 gSnapMultiplier;
